@@ -28,7 +28,7 @@ jobs:
         run: python -m unittest discover -s tests -v
 
       - name: Check Python syntax
-        run: python -m py_compile server.py tests/test_server.py
+        run: python -m py_compile server.py upstream_adapter.py tests/test_server.py
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
+from html.parser import HTMLParser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,7 +36,7 @@ OPTIONS_FILE = Path(
 UPSTREAM_SCRIPT = Path(
     os.environ.get(
         "ROYAL_PRICE_UPSTREAM_SCRIPT",
-        "/opt/upstream/BrowseRoyalCaribbeanPrice.py",
+        "/opt/upstream/RoyalPriceDashboardBrowse.py",
     )
 )
 UPSTREAM_COMMIT = "bf5212c26576d468a6af2043565ece2d01f8b503"
@@ -57,6 +58,8 @@ PRODUCT_RE = re.compile(
     r"(?:\s+per\s+(?P<unit>day|night))?|Price Not Available)\s+"
     r"\(prefix:\s*(?P<prefix>[^,]+),\s*product:\s*(?P<product>[^)]+)\)\s*$"
 )
+PRODUCT_DESCRIPTION_MARKER = "__ROYAL_PRICE_DASHBOARD_DESCRIPTION__ "
+MAX_PRODUCT_DESCRIPTION_CHARS = 20_000
 
 DEFAULT_OPTIONS: dict[str, Any] = {
     "ship": None,
@@ -103,6 +106,99 @@ def utc_now() -> str:
 
 def strip_ansi(value: str) -> str:
     return ANSI_RE.sub("", value).strip()
+
+
+class _ProductDescriptionTextParser(HTMLParser):
+    BLOCK_TAGS = frozenset(
+        {
+            "article",
+            "br",
+            "div",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "li",
+            "ol",
+            "p",
+            "section",
+            "ul",
+        }
+    )
+    IGNORED_TAGS = frozenset({"noscript", "script", "style"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.ignored_depth = 0
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        del attrs
+        normalized = tag.casefold()
+        if self.ignored_depth:
+            self.ignored_depth += 1
+        elif normalized in self.IGNORED_TAGS:
+            self.ignored_depth = 1
+        elif normalized in self.BLOCK_TAGS:
+            self.parts.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.ignored_depth:
+            self.ignored_depth -= 1
+        elif tag.casefold() in self.BLOCK_TAGS:
+            self.parts.append(" ")
+
+    def handle_data(self, data: str) -> None:
+        if not self.ignored_depth:
+            self.parts.append(data)
+
+
+def normalize_product_description(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    parser = _ProductDescriptionTextParser()
+    try:
+        parser.feed(value)
+        parser.close()
+        text = "".join(parser.parts)
+    except Exception:
+        text = re.sub(r"<[^>]*>", " ", value)
+
+    text = text.replace("\u2014", " - ")
+    text = "".join(
+        character if ord(character) >= 32 or character in "\t\n\r" else " "
+        for character in text
+    )
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return None
+    return text[:MAX_PRODUCT_DESCRIPTION_CHARS].rstrip()
+
+
+def parse_product_description_marker(line: str) -> tuple[str, str] | None:
+    marker_index = line.find(PRODUCT_DESCRIPTION_MARKER)
+    if marker_index < 0:
+        return None
+    encoded = line[marker_index + len(PRODUCT_DESCRIPTION_MARKER) :]
+    try:
+        payload = json.loads(encoded)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    product_id = str(payload.get("id") or "").strip()
+    description = normalize_product_description(payload.get("description"))
+    if not product_id or len(product_id) > 200 or description is None:
+        return None
+    return product_id, description
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -466,12 +562,19 @@ def parse_browser_output(
     products_started = False
     itinerary: list[str] = []
     sailing_description: str | None = None
+    descriptions: dict[str, str] = {}
     products: dict[str, dict[str, Any]] = {}
 
     for raw_line in output.splitlines():
         has_blue_heading = "\x1b[94m" in raw_line and "(prefix:" not in raw_line
         line = strip_ansi(raw_line)
         if not line:
+            continue
+
+        parsed_description = parse_product_description_marker(line)
+        if parsed_description is not None:
+            product_id, description = parsed_description
+            descriptions[product_id] = description
             continue
 
         if line.startswith("Browsing for "):
@@ -508,6 +611,7 @@ def parse_browser_output(
             "currency": (match.group("currency") or currency).upper(),
             "unit": match.group("unit"),
             "price_available": parsed_price is not None,
+            "description": None,
         }
 
         existing = products.get(product_code)
@@ -518,6 +622,11 @@ def parse_browser_output(
             existing["currency"] = item["currency"]
             existing["unit"] = item["unit"]
             existing["price_available"] = True
+
+    for product_id, description in descriptions.items():
+        item = products.get(product_id)
+        if item is not None:
+            item["description"] = description
 
     if not products:
         tail = "\n".join(strip_ansi(line) for line in output.splitlines()[-12:])

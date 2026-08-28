@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 import server
+import upstream_adapter
 
 
 SAMPLE_OUTPUT = """
@@ -26,6 +27,7 @@ Gathering list of products.  This may take a few minutes; please be patient.
 \x1b[94mShore Excursions\x1b[0m
 \t\x1b[94mDay 4: Perfect Day Cococay, Bahamas\x1b[0m
 \tThrill Waterpark - Full Day Pass  \x1b[1;32m61.99 USD\x1b[0m (prefix: shorex, product: ZH01)
+__ROYAL_PRICE_DASHBOARD_DESCRIPTION__ {"id":"ZH01","description":"<p>A fast ride\\u2014bring a towel &amp; sunscreen.</p><script>ignore me</script>"}
 \x1b[94mCelebrations\x1b[0m
 \tDeluxe Beverage Package \x1b[1;32m95.99 USD\x1b[0m per day (prefix: celebrations, product: 3222)
 """
@@ -51,6 +53,7 @@ class ParserTests(unittest.TestCase):
     def test_release_versions_are_consistent(self):
         repository_root = Path(__file__).resolve().parents[1]
         version = server.APP_VERSION
+        dockerfile = (repository_root / "Dockerfile").read_text(encoding="utf-8")
 
         self.assertIn(
             f'version: "{version}"',
@@ -58,7 +61,15 @@ class ParserTests(unittest.TestCase):
         )
         self.assertIn(
             f"ARG BUILD_VERSION={version}",
-            (repository_root / "Dockerfile").read_text(encoding="utf-8"),
+            dockerfile,
+        )
+        self.assertIn(
+            "COPY upstream_adapter.py /opt/upstream/RoyalPriceDashboardBrowse.py",
+            dockerfile,
+        )
+        self.assertIn(
+            "ba57bff356d7739158af83a991f2a79de2be583572def0039e73a103244cfa01",
+            dockerfile,
         )
         self.assertIn(
             f'const APP_VERSION = "{version}";',
@@ -93,7 +104,40 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(by_id["3222"]["unit"], "day")
         self.assertFalse(by_id["0904"]["price_available"])
         self.assertEqual(by_id["ZH01"]["subcategory"], "Day 4: Perfect Day Cococay, Bahamas")
+        self.assertEqual(
+            by_id["ZH01"]["description"],
+            "A fast ride - bring a towel & sunscreen.",
+        )
+        self.assertIsNone(by_id["3222"]["description"])
         self.assertEqual(len(parsed["sailing"]["itinerary"]), 2)
+
+    def test_invalid_and_unknown_description_markers_are_ignored(self):
+        output = SAMPLE_OUTPUT + """
+__ROYAL_PRICE_DASHBOARD_DESCRIPTION__ not-json
+__ROYAL_PRICE_DASHBOARD_DESCRIPTION__ {"id":"UNKNOWN","description":"No match"}
+"""
+        parsed = server.parse_browser_output(
+            output,
+            ship="Wonder of the Seas",
+            sail_date="2031-06-20",
+            currency="USD",
+        )
+        self.assertEqual(len(parsed["items"]), 3)
+
+    def test_description_normalization_bounds_and_sanitizes_public_copy(self):
+        description = server.normalize_product_description(
+            f"<div>First&nbsp;part</div><p>Second{chr(0x2014)}part</p>"
+            "<style>hidden</style>"
+        )
+        self.assertEqual(description, "First part Second - part")
+        self.assertEqual(
+            len(
+                server.normalize_product_description(
+                    "x" * (server.MAX_PRODUCT_DESCRIPTION_CHARS + 50)
+                )
+            ),
+            server.MAX_PRODUCT_DESCRIPTION_CHARS,
+        )
 
     def test_ship_menu_is_structured_and_brand_is_inferred(self):
         ships = server.parse_ship_menu(SHIP_MENU_OUTPUT)
@@ -113,6 +157,142 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(sailings[0]["duration"], 4)
         self.assertEqual(sailings[1]["sail_date"], "2027-02-21")
         self.assertEqual(sailings[1]["duration"], 7)
+
+
+class UpstreamAdapterTests(unittest.TestCase):
+    PRODUCT_QUERY = """
+    query WebProductsByCategory {
+      products {
+        commerceProducts {
+          id
+          title
+          variantOptions { code name }
+        }
+      }
+    }
+    """
+
+    def payload(self, category="shorex"):
+        return {
+            "operationName": "WebProductsByCategory",
+            "variables": {"category": category},
+            "query": self.PRODUCT_QUERY,
+        }
+
+    def test_description_is_requested_only_for_shore_excursions(self):
+        self.assertEqual(
+            upstream_adapter.DESCRIPTION_MARKER,
+            server.PRODUCT_DESCRIPTION_MARKER,
+        )
+        original = self.payload()
+        updated = upstream_adapter.add_description_to_product_query(original)
+
+        self.assertIsNot(updated, original)
+        self.assertIn("title description", updated["query"])
+        self.assertNotIn("title description", original["query"])
+        beverage = self.payload("beverage")
+        self.assertIs(
+            upstream_adapter.add_description_to_product_query(beverage),
+            beverage,
+        )
+
+    def test_extensions_preserve_output_and_emit_machine_readable_markers(self):
+        requests = []
+        printed = []
+        logged = []
+
+        def original_request(*args, **kwargs):
+            requests.append((args, kwargs))
+            return "response"
+
+        def original_print(*args):
+            printed.append(args)
+
+        namespace = {
+            "_execute_api_request": original_request,
+            "print_and_sort_products": original_print,
+            "log": logged.append,
+        }
+        upstream_adapter.install_extensions(namespace)
+
+        response = namespace["_execute_api_request"](
+            method="POST",
+            json_data=self.payload(),
+        )
+        self.assertEqual(response, "response")
+        self.assertIn("title description", requests[0][1]["json_data"]["query"])
+
+        products = [
+            {"id": "ZH01", "description": "A sample description."},
+            {"id": "BLANK", "description": ""},
+        ]
+        namespace["print_and_sort_products"](
+            products,
+            "alpha",
+            "asc",
+            "USD",
+            "shorex",
+            True,
+        )
+        self.assertEqual(len(printed), 1)
+        self.assertEqual(len(logged), 1)
+        self.assertTrue(logged[0].startswith(upstream_adapter.DESCRIPTION_MARKER))
+        marker = json.loads(logged[0].removeprefix(upstream_adapter.DESCRIPTION_MARKER))
+        self.assertEqual(
+            marker,
+            {"id": "ZH01", "description": "A sample description."},
+        )
+
+        namespace["print_and_sort_products"](
+            products,
+            "alpha",
+            "asc",
+            "USD",
+            "beverage",
+            True,
+        )
+        self.assertEqual(len(logged), 1)
+
+    def test_main_loads_and_extends_a_pinned_module_without_rewriting_it(self):
+        fake_source = """
+def _execute_api_request(*args, **kwargs):
+    print(kwargs["json_data"]["query"])
+    return None
+
+def print_and_sort_products(*args):
+    print("ORIGINAL PRODUCT OUTPUT")
+
+log = print
+
+def main(args=None):
+    _execute_api_request(json_data={
+        "operationName": "WebProductsByCategory",
+        "variables": {"category": "shorex"},
+        "query": "commerceProducts { id title variantOptions { code } }",
+    })
+    print_and_sort_products(
+        [{"id": "ZH01", "description": "Adapter description."}],
+        "alpha",
+        "asc",
+        "USD",
+        "shorex",
+        True,
+    )
+"""
+        with tempfile.TemporaryDirectory() as temp_directory:
+            pinned_script = Path(temp_directory) / "PinnedBrowser.py"
+            pinned_script.write_text(fake_source, encoding="utf-8")
+            output = io.StringIO()
+            with mock.patch.dict(
+                upstream_adapter.os.environ,
+                {upstream_adapter.PINNED_SCRIPT_ENV: str(pinned_script)},
+            ), mock.patch("sys.stdout", output):
+                upstream_adapter.main([])
+
+        rendered = output.getvalue()
+        self.assertIn("title description", rendered)
+        self.assertIn("ORIGINAL PRODUCT OUTPUT", rendered)
+        self.assertIn(upstream_adapter.DESCRIPTION_MARKER, rendered)
 
 
 class CruiseCompletionTests(unittest.TestCase):

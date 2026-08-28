@@ -12,6 +12,7 @@ const model = {
   category: "",
   sort: "category",
   busyItems: new Set(),
+  openDescriptions: new Set(),
   openHistory: new Set(),
   busyHistory: new Set(),
   historyCache: new Map(),
@@ -168,6 +169,7 @@ function resetCatalogView(nextState) {
   setActiveTab(preferredTabForState(nextState));
   model.search = "";
   model.category = "";
+  model.openDescriptions.clear();
   model.openHistory.clear();
   model.busyHistory.clear();
   model.historyCache.clear();
@@ -274,6 +276,7 @@ function filteredItems(data) {
         item.name,
         item.category,
         item.subcategory,
+        item.description,
         item.prefix,
         item.product,
       ].filter(Boolean).join(" ").toLocaleLowerCase();
@@ -568,6 +571,25 @@ function createHistoryPanel(item) {
   return panel;
 }
 
+function createDescriptionDisclosure(item) {
+  const details = node("details", "item-description");
+  const summary = node("summary", "item-description-toggle");
+  const copy = node("p", "item-description-copy", item.description);
+
+  details.open = model.openDescriptions.has(item.id);
+  summary.textContent = details.open ? "Hide description" : "Show description";
+  details.addEventListener("toggle", () => {
+    if (details.open) {
+      model.openDescriptions.add(item.id);
+    } else {
+      model.openDescriptions.delete(item.id);
+    }
+    summary.textContent = details.open ? "Hide description" : "Show description";
+  });
+  details.append(summary, copy);
+  return details;
+}
+
 function createRow(item, data) {
   const isPinned = data.pinned.has(item.id);
   const watch = data.watching[item.id];
@@ -587,6 +609,7 @@ function createRow(item, data) {
   codeLine.append("Watch code ");
   codeLine.append(node("code", "", `${item.prefix} / ${item.product}`));
   identity.append(codeLine);
+  if (item.description) identity.append(createDescriptionDisclosure(item));
   row.append(identity);
 
   const priceBlock = node("div", "price-block");

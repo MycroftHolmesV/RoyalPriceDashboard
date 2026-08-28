@@ -760,6 +760,39 @@ h1 {
   border-radius: 5px;
 }
 
+.item-description {
+  margin-top: 7px;
+}
+
+.item-description-toggle {
+  width: fit-content;
+  color: var(--blue-dark);
+  font-size: 0.82rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.item-description-toggle:hover {
+  text-decoration: underline;
+}
+
+.item-description-toggle:focus-visible {
+  border-radius: 4px;
+  outline: 3px solid rgba(8, 120, 209, 0.2);
+  outline-offset: 3px;
+}
+
+.item-description-copy {
+  margin: 9px 0 0;
+  padding: 10px 12px;
+  color: var(--text);
+  background: var(--surface-muted);
+  border-left: 3px solid var(--aqua);
+  border-radius: 8px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -1229,6 +1262,10 @@ h1 {
   .item-code code {
     color: #bbd3e7;
     background: #243545;
+  }
+
+  .item-description-toggle {
+    color: #a5dcff;
   }
 
   .row-action {

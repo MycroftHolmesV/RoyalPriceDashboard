@@ -2,6 +2,10 @@
 
 ## 0.4.0 (private release candidate)
 
+- Add searchable shore-excursion descriptions from Royal's public catalog
+  behind a compact per-item **Show description** disclosure.
+- Preserve the exact checksum-pinned upstream file while a local adapter
+  requests and safely normalizes the additional public description field.
 - Add a 10-minute per-cruise refresh cooldown and surface the remaining wait in
   the dashboard.
 - Back off failed upstream refreshes exponentially from 15 minutes to a six-hour

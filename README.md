@@ -37,6 +37,11 @@ It deliberately keeps four concepts separate:
 - **Watched** items have an explicit target price and are the only items that
   can create a Home Assistant persistent notification.
 
+Shore-excursion rows can reveal the public catalog description through a
+compact **Show description** control. Descriptions remain collapsed by default,
+are included in catalog searches, and are normalized to plain text before they
+reach the browser.
+
 The existing Royal Caribbean Price Check App remains independent and untouched.
 
 ## Screenshots
@@ -90,6 +95,9 @@ The catalog browser comes from
 [`jdeath/CheckRoyalCaribbeanPrice`](https://github.com/jdeath/CheckRoyalCaribbeanPrice).
 Its MIT license is preserved in [upstream-LICENSE](upstream-LICENSE). The image
 build downloads one pinned commit and fails if its SHA-256 checksum changes.
+The verified upstream file stays unchanged in the image. A small local adapter
+loads that exact file, requests the public shore-excursion description field,
+and adds machine-readable description markers to the existing terminal output.
 
 As of 2026-08-27, the pinned browser file is byte-for-byte identical to the
 version on upstream `main`. Royal Price Dashboard still parses the upstream
@@ -114,7 +122,7 @@ checks with:
 
 ```text
 python -m unittest discover -s tests -v
-python -m py_compile server.py tests/test_server.py
+python -m py_compile server.py upstream_adapter.py tests/test_server.py
 node --check static/app.js
 ```
 
