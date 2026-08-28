@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.0 (public repository candidate)
+
+- Package the App in the Home Assistant third-party repository layout with a
+  root `repository.yaml` and one-click My Home Assistant repository link.
+- Declare `amd64` and `aarch64` support through a generic GHCR
+  multi-architecture image.
+- Add release-gated Home Assistant builder workflows for native architecture
+  builds, Cosign signing, and a versioned multi-architecture manifest. Pull
+  requests and ordinary pushes build without publishing.
+- Use a cold Home Assistant backup so the App is stopped while Supervisor copies
+  JSON and SQLite state.
+- Restrict the distributed App container's HTTP service to the Supervisor
+  Ingress proxy and loopback clients while leaving ordinary source-only local
+  runs unrestricted unless an allowlist is configured.
+- Add local regression coverage for repository metadata, minimum privileges,
+  Ingress client filtering, and restoring a copied cold-backup data directory.
+
 ## 0.5.2 (private patch)
 
 - Default Changes to all catalog items so the everyday summary does not appear

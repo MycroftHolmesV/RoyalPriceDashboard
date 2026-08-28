@@ -9,13 +9,14 @@ Before opening a pull request:
 2. Keep sailing dates in ISO 8601 (`YYYY-MM-DD`) inside the App.
 3. Do not commit secrets, tokens, live catalogs, preferences, notification
    data, SQLite databases, or material copied from an App's `/data` volume.
-4. Preserve `upstream-LICENSE` and update the Dockerfile checksum deliberately
-   if the pinned upstream source changes.
+4. Preserve `royal-price-dashboard/upstream-LICENSE` and update the Dockerfile
+   checksum deliberately if the pinned upstream source changes.
 5. Run:
 
    ```text
+   cd royal-price-dashboard
    python -m unittest discover -s tests -v
-   python -m py_compile server.py tests/test_server.py
+   python -m py_compile server.py upstream_adapter.py tests/test_server.py
    node --check static/app.js
    ```
 

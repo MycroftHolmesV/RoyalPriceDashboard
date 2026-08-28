@@ -28,7 +28,7 @@ from typing import Any
 
 APP_ROOT = Path(__file__).resolve().parent
 STATIC_ROOT = APP_ROOT / "static"
-APP_VERSION = "0.5.2"
+APP_VERSION = "0.6.0"
 DATA_ROOT = Path(os.environ.get("ROYAL_PRICE_DATA_DIR", "/data"))
 OPTIONS_FILE = Path(
     os.environ.get("ROYAL_PRICE_OPTIONS_FILE", "/data/options.json")
@@ -42,6 +42,11 @@ UPSTREAM_SCRIPT = Path(
 UPSTREAM_COMMIT = "bf5212c26576d468a6af2043565ece2d01f8b503"
 LISTEN_HOST = os.environ.get("ROYAL_PRICE_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("ROYAL_PRICE_PORT", "8099"))
+ALLOWED_CLIENTS = frozenset(
+    value.strip()
+    for value in os.environ.get("ROYAL_PRICE_ALLOWED_CLIENTS", "").split(",")
+    if value.strip()
+)
 HISTORY_RETENTION_DAYS_AFTER_SAILING = 30
 DISCOVERY_CACHE_SECONDS = 6 * 60 * 60
 MANUAL_REFRESH_COOLDOWN_SECONDS = 10 * 60
@@ -2060,6 +2065,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, message: str, *args: Any) -> None:
         LOGGER.info("HTTP %s - %s", self.address_string(), message % args)
 
+    def _reject_untrusted_client(self) -> bool:
+        client = self.client_address[0]
+        if not ALLOWED_CLIENTS or client in ALLOWED_CLIENTS:
+            return False
+        LOGGER.warning("Rejected HTTP request from non-Ingress client %s", client)
+        self._send_json({"error": "Forbidden"}, HTTPStatus.FORBIDDEN)
+        return True
+
     def _route_path(self) -> str:
         path = urllib.parse.urlsplit(self.path).path
         for marker in ("/api/", "/health"):
@@ -2175,6 +2188,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return payload
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if self._reject_untrusted_client():
+            return
         route = self._route_path()
         if route == "/health":
             self._send_json({"status": "ok", "version": APP_VERSION})
@@ -2301,6 +2316,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_bytes(payload, content_type=content_type)
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if self._reject_untrusted_client():
+            return
         try:
             route = self._route_path()
             body = self._read_json()
@@ -2413,6 +2430,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
 
     def do_DELETE(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if self._reject_untrusted_client():
+            return
         try:
             route = self._route_path()
             match = re.fullmatch(r"/api/cruises/([^/]+)", route)

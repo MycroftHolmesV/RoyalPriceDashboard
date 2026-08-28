@@ -109,9 +109,13 @@ but legacy hidden selections do not become pins.
 - Refresh cooldowns and failure counters are intentionally process-local. A
   container restart clears them, allowing recovery from a stuck process. Normal
   successful-refresh scheduling still comes from the catalog's saved timestamp.
-- Home Assistant App backups include the private `/data` volume. Create a backup
-  before an upgrade or removal, and verify that the App is included before
-  relying on it for recovery.
+- Home Assistant App backups include the private `/data` volume. This App uses
+  a cold backup, so Supervisor stops it while copying that state and starts it
+  again afterward. Create a backup before an upgrade or removal, and verify
+  that the App is included before relying on it for recovery.
+- A repository App and a local development App have different Home Assistant
+  identities and different `/data` volumes. Installing the repository version
+  is not an in-place update of `local_royal_price_dashboard`.
 - Removing a cruise is intentionally destructive for that sailing. It deletes
   the cruise's catalog, preferences, and sailing-keyed history after
   confirmation; it does not affect another cruise or the separate price-checker
@@ -129,5 +133,6 @@ but legacy hidden selections do not become pins.
   the App's Ingress session. Frontend assets include the release version to
   reduce WebView caching ambiguity.
 - Do not post Home Assistant tokens, App logs containing private context, or the
-  App's `/data` directory in a public issue. Follow [SECURITY.md](SECURITY.md)
+  App's `/data` directory in a public issue. Follow the [security
+  policy](https://github.com/MycroftHolmesV/RoyalPriceDashboard/security/policy)
   for private reporting guidance.

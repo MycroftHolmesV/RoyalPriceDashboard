@@ -4,8 +4,8 @@ The Home Assistant App assets were generated specifically for Royal Price
 Dashboard with OpenAI ImageGen on 2026-08-27, then mechanically reduced with
 Lanczos resampling to the Home Assistant presentation sizes:
 
-- `icon.png`: 128 x 128, transparent PNG
-- `logo.png`: 250 x 100, transparent PNG
+- `royal-price-dashboard/icon.png`: 128 x 128, transparent PNG
+- `royal-price-dashboard/logo.png`: 250 x 100, transparent PNG
 
 No cruise-line, Home Assistant, or upstream-project artwork was supplied as a
 reference. The prompts explicitly excluded those trademarks.

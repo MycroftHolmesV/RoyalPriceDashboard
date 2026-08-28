@@ -2,12 +2,13 @@ ARG BUILD_FROM=ghcr.io/home-assistant/base-python:3.14-alpine3.24-2026.06.1
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=0.5.2
+ARG BUILD_VERSION=0.6.0
 
 ENV PYTHONUNBUFFERED=1 \
     ROYAL_PRICE_DATA_DIR=/data \
     ROYAL_PRICE_HOST=0.0.0.0 \
     ROYAL_PRICE_OPTIONS_FILE=/data/options.json \
+    ROYAL_PRICE_ALLOWED_CLIENTS=172.30.32.2,127.0.0.1,::1 \
     ROYAL_PRICE_UPSTREAM_SCRIPT=/opt/upstream/RoyalPriceDashboardBrowse.py \
     ROYAL_PRICE_PINNED_SCRIPT=/opt/upstream/BrowseRoyalCaribbeanPrice.py
 
@@ -34,4 +35,6 @@ RUN chmod 0755 /etc/services.d/royal-price-dashboard/run \
 LABEL \
     io.hass.version="${BUILD_VERSION}" \
     io.hass.type="app" \
-    io.hass.arch="${BUILD_ARCH}"
+    io.hass.arch="${BUILD_ARCH}" \
+    org.opencontainers.image.source="https://github.com/MycroftHolmesV/RoyalPriceDashboard" \
+    org.opencontainers.image.licenses="MIT"

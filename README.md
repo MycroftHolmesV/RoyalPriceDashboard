@@ -1,180 +1,89 @@
 # Royal Price Dashboard
 
-An experimental Home Assistant App that turns the public catalogs produced by
-`BrowseRoyalCaribbeanPrice.py` into a searchable, multi-cruise Ingress
-dashboard.
+Royal Price Dashboard is an experimental Home Assistant App for browsing public
+Royal Caribbean and Celebrity Cruise Planner prices, keeping per-sailing
+shortlists, explicitly watching selected products, and reviewing compact price
+history.
 
 > [!IMPORTANT]
-> This community project is not affiliated with, endorsed by, or supported by
-> Royal Caribbean Group, Royal Caribbean International, Celebrity Cruises, or
-> Home Assistant. It uses public prices, which can differ from signed-in,
-> reservation-specific offers.
+> This source is prepared as a public release candidate, but the GitHub
+> repository and signed container images have not been published. The install
+> link below is ready for the public release. It will not work until those
+> approval-gated steps are complete.
 
-The App is in private release preparation and does not yet have a supported
-public installation repository. The source is available for review and local
-testing while installation, image publishing, and hardware validation are
-completed.
+[![Add the Royal Price Dashboard repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FMycroftHolmesV%2FRoyalPriceDashboard)
 
-On first run, **Add cruise** guides you through Royal Caribbean or Celebrity,
-live public ship discovery, an actual future sailing, currency, and notification
-settings. Additional cruises can be added and switched from
-the dashboard; no cruise-line account or reservation is required. A confirmed
-**Remove cruise** action deletes only that sailing's App-private catalog,
-preferences, and price history.
+## Installation after public release
 
-When a cruise reaches its calculated return date, the dashboard marks it
-complete and stops price refreshes. Nothing removes the cruise automatically:
-its catalog, pins, and watches stay available, while price history remains
-subject to the existing retention period, until you choose
-**Remove completed cruise**.
+Royal Price Dashboard requires a Home Assistant installation with the Apps
+store, such as Home Assistant OS or Home Assistant Supervised.
 
-It deliberately keeps four concepts separate:
+1. Select the **Add repository** badge above. As a manual alternative, open
+   **Settings > Apps > App store**, open the top-right menu, choose
+   **Repositories**, and add:
 
-- **All** includes every catalog item and never implies notifications.
-- **Pinned** items form a per-cruise shortlist while remaining in **All**.
-- **History** records price and availability changes for every item, whether it
-  is pinned, unpinned, watched, or unwatched.
-- **Watched** items have an explicit target price and are the only items that
-  can create a Home Assistant persistent notification.
+   ```text
+   https://github.com/MycroftHolmesV/RoyalPriceDashboard
+   ```
 
-The **Changes** view answers the everyday "what changed since I last opened
-this dashboard?" question. It defaults to all products, can be narrowed to
-watched products, and remembers the prior visit separately for each cruise in
-the current browser. A visit timestamp is never allowed to make the lookback
-newer than the start of yesterday in the browser's local time. **All changed
-items** instead shows each product with a recorded change once, using its latest
-change and date. The first visit shows the latest recorded changes.
-Watched product cards also show the date and amount of their most recent actual
-price change.
+2. Find **Royal Price Dashboard** in the App store and select **Install**.
+3. Start the App, enable **Show in sidebar** if desired, and open **Royal
+   Prices**.
+4. Use **Add cruise** to choose Royal Caribbean or Celebrity, a discovered
+   ship, an actual future sailing, and a currency.
 
-Watched products with enough history can receive a factual price badge.
-**Record low** means the current price matches the lowest saved available price
-and at least one saved price was higher. Otherwise, **Below average** means the
-current price is below that product's arithmetic mean across its saved
-available price points. At least two price points are required. Because history
-stores the initial baseline and later changes without duplicating unchanged
-refreshes, this is a recorded-price average rather than a time-weighted average.
+The repository provides signed, versioned images for `amd64` and `aarch64`.
+Users do not need HACS, jdeath's Home Assistant repository, the separate Royal
+Caribbean Price Check App, or a cruise-line login. The checksum-pinned jdeath
+browser is packaged into this App image under its MIT license.
 
-Each item's compact history chart remains quick to scan. Select the chart to
-open a much larger view with more readable price labels; narrow screens can
-scroll across the expanded chart.
+If you have a local development copy named `local_royal_price_dashboard`, the
+repository version is a separate Home Assistant App with a separate private
+`/data` volume. Installing it is not an in-place update of the local copy. Do
+not remove the local copy until a separately tested migration path or an
+accepted clean start is available.
 
-Product rows can reveal the public catalog description through a compact
-**Show description** control. Descriptions remain collapsed by default, are
-included in catalog searches, and are normalized to plain text before they
-reach the browser.
+## What stays separate
 
-The existing Royal Caribbean Price Check App remains independent and untouched.
+- Browsing the catalog never enables notifications.
+- Pinning creates a shortlist and never enables notifications.
+- History records price and availability changes for every product.
+- Only a product that the user explicitly watches can create a Home Assistant
+  persistent notification.
 
-## Screenshots
+Royal Price Dashboard uses public prices, which can differ from signed-in or
+reservation-specific offers. It is not affiliated with Royal Caribbean Group,
+Royal Caribbean International, Celebrity Cruises, Home Assistant, or the
+upstream project.
 
-Clean first-run setup (mobile viewport):
+## Documentation
 
-![Royal Price Dashboard first-run cruise setup](screenshots/onboarding-mobile.png)
+- [App overview](royal-price-dashboard/README.md)
+- [User guide](royal-price-dashboard/DOCS.md)
+- [Changelog](royal-price-dashboard/CHANGELOG.md)
+- [Security policy](SECURITY.md)
+- [Release procedure](RELEASING.md)
+- [Upstream MIT license](royal-price-dashboard/upstream-LICENSE)
 
-Curated public-price catalog (desktop viewport):
+![Royal Price Dashboard populated catalog](screenshots/dashboard-desktop.jpg)
 
-![Royal Price Dashboard populated catalog](screenshots/dashboard-desktop.png)
-
-Both screenshots use the repository's curated test fixtures, not a deployed
-App or reservation. See [screenshots/README.md](screenshots/README.md).
-
-## What it stores
-
-Each cruise has a separate catalog, pin list, watch targets, and notification
-setting. Compact SQLite history is keyed by ship, ISO sailing
-date, currency, and product. All of that stays in the Home Assistant App's
-private `/data` volume. It is not part of this source repository or Docker build
-context.
-
-No Royal Caribbean or Celebrity login is requested or stored. Exporting watches
-produces a YAML snippet in the browser; it does not modify the separate price
-checker automatically.
-
-## Automatic refresh policy
-
-A cruise with one or more explicitly watched products refreshes every 12 hours
-by default. A cruise with no watches refreshes every 24 hours. Pins do not
-select the faster schedule because pinning cannot generate an alert. Adding the
-first watch or removing the last watch changes the schedule automatically from
-the most recent successful catalog timestamp.
-
-The Home Assistant App configuration accepts global YAML overrides. The
-dashboard does not expose per-cruise cadence controls:
-
-```yaml
-watched_refresh_interval_hours: 12
-unwatched_refresh_interval_hours: 24
-```
-
-Both optional values accept whole hours from 1 through 168 and are read when
-the App starts. When they are omitted, the backend supplies the 12-hour and
-24-hour defaults. The optional legacy `refresh_interval_hours` setting remains
-accepted as an unwatched fallback so an existing installation can upgrade
-without an invalid-option warning.
-
-## Security boundary
-
-- No host network, filesystem mappings, Docker API, Supervisor API, privileged
-  mode, or full access.
-- Home Assistant API access is used only for persistent notifications.
-- Preferences and cached catalog data live in cruise-specific directories in
-  the App's private `/data` volume.
-- Compact per-sailing history lives in a private SQLite database. Unchanged
-  refreshes do not create duplicate points, and a sailing's records expire 30
-  days after its sailing date.
-- The upstream browser is pinned to commit
-  `bf5212c26576d468a6af2043565ece2d01f8b503` and verified by SHA-256 during
-  the image build.
-- `curl-cffi` is pinned alongside `requests` so the upstream browser can use
-  its supported TLS-impersonation path for public endpoints that reject plain
-  HTTP clients.
-
-See [SECURITY.md](SECURITY.md) for reporting guidance and the remaining
-hardening gates.
-
-## Upstream relationship
-
-The catalog browser comes from
-[`jdeath/CheckRoyalCaribbeanPrice`](https://github.com/jdeath/CheckRoyalCaribbeanPrice).
-Its MIT license is preserved in [upstream-LICENSE](upstream-LICENSE). The image
-build downloads one pinned commit and fails if its SHA-256 checksum changes.
-The verified upstream file stays unchanged in the image. A small local adapter
-loads that exact file, requests the public product-description field across all
-catalog categories, and adds machine-readable description markers to the
-existing terminal output.
-
-As of 2026-08-27, the pinned browser file is byte-for-byte identical to the
-version on upstream `main`. Royal Price Dashboard still parses the upstream
-terminal-oriented output; a structured JSON contract is the preferred future
-integration.
-
-## Upgrade compatibility
-
-When a pre-0.3 installation has legacy `ship` and `sail_date` App options, the
-dashboard creates a cruise registry and copies the existing root catalog and
-watch preferences into that cruise's directory. Legacy hidden selections are
-not converted to pins, so the initial pinned shortlist is empty. The original
-files are deliberately left in place. The shared SQLite history already keys
-records by ship, ISO sailing date, and currency, so prior history remains
-available without a rewrite.
+The screenshots use curated fixtures rather than a deployed App or reservation.
 
 ## Development
 
-The App backend uses only the Python standard library at runtime; the container
-also installs the dependencies required by the upstream browser. Run the local
-checks with:
+Run source checks from the App directory:
 
 ```text
+cd royal-price-dashboard
 python -m unittest discover -s tests -v
 python -m py_compile server.py upstream_adapter.py tests/test_server.py
 node --check static/app.js
 ```
 
-Pull requests also build the `amd64` container in GitHub Actions. Docker is not
-installed on the current development host, so the clean CI build is an explicit
-release gate rather than locally claimed evidence.
+The root `repository.yaml` and the `royal-price-dashboard` folder follow the
+Home Assistant third-party App repository layout. Container publication occurs
+only when a maintainer explicitly publishes a matching GitHub release. Normal
+pull requests and branch pushes cannot publish images.
 
-Licensed under the [MIT License](LICENSE). Contributions are welcome after
-reading [CONTRIBUTING.md](CONTRIBUTING.md). Artwork provenance and the exact
-generation prompts are recorded in [ARTWORK.md](ARTWORK.md).
+Licensed under the [MIT License](LICENSE). The pinned upstream browser retains
+its separate [MIT notice](royal-price-dashboard/upstream-LICENSE).

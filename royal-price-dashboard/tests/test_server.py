@@ -2,12 +2,15 @@ import copy
 import http.client
 import io
 import json
+import shutil
 import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
+from http import HTTPStatus
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
@@ -53,13 +56,15 @@ Select sailing:
 
 class ParserTests(unittest.TestCase):
     def test_release_versions_are_consistent(self):
-        repository_root = Path(__file__).resolve().parents[1]
+        app_root = Path(__file__).resolve().parents[1]
+        repository_root = app_root.parent
         version = server.APP_VERSION
-        dockerfile = (repository_root / "Dockerfile").read_text(encoding="utf-8")
+        dockerfile = (app_root / "Dockerfile").read_text(encoding="utf-8")
+        config = (app_root / "config.yaml").read_text(encoding="utf-8")
 
         self.assertIn(
             f'version: "{version}"',
-            (repository_root / "config.yaml").read_text(encoding="utf-8"),
+            config,
         )
         self.assertIn(
             f"ARG BUILD_VERSION={version}",
@@ -74,14 +79,47 @@ class ParserTests(unittest.TestCase):
             dockerfile,
         )
         self.assertIn(
-            f'const APP_VERSION = "{version}";',
-            (repository_root / "static" / "app.js").read_text(encoding="utf-8"),
+            "ROYAL_PRICE_ALLOWED_CLIENTS=172.30.32.2,127.0.0.1,::1",
+            dockerfile,
         )
-        index = (repository_root / "static" / "index.html").read_text(
+        self.assertIn("image: ghcr.io/mycroftholmesv/royal-price-dashboard", config)
+        self.assertIn("  - aarch64", config)
+        self.assertIn("  - amd64", config)
+        self.assertIn("backup: cold", config)
+        repository_config = (repository_root / "repository.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("name: Royal Price Dashboard", repository_config)
+        self.assertIn(
+            "https://github.com/MycroftHolmesV/RoyalPriceDashboard",
+            repository_config,
+        )
+        self.assertIn(
+            f'const APP_VERSION = "{version}";',
+            (app_root / "static" / "app.js").read_text(encoding="utf-8"),
+        )
+        index = (app_root / "static" / "index.html").read_text(
             encoding="utf-8"
         )
         self.assertIn(f"styles.css?v={version}", index)
         self.assertIn(f"app.js?v={version}", index)
+
+    def test_app_metadata_keeps_the_public_security_boundary_narrow(self):
+        app_root = Path(__file__).resolve().parents[1]
+        config = (app_root / "config.yaml").read_text(encoding="utf-8")
+
+        self.assertIn("ingress: true", config)
+        self.assertIn("homeassistant_api: true", config)
+        for forbidden in (
+            "host_network:",
+            "docker_api:",
+            "hassio_api:",
+            "full_access:",
+            "privileged:",
+            "ports:",
+            "map:",
+        ):
+            self.assertNotIn(forbidden, config)
 
     def test_change_cards_keep_history_in_dialog_and_offer_actions(self):
         repository_root = Path(__file__).resolve().parents[1]
@@ -574,6 +612,42 @@ class MultiCruiseTests(unittest.TestCase):
         reloaded.set_active_cruise(first_id)
         self.assertIn("3222", reloaded.state()["preferences"]["watching"])
 
+    def test_cold_backup_copy_restores_catalog_preferences_and_history(self):
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        cruise_id = self.add_cruise(
+            manager,
+            ship="Wonder of the Seas",
+            sail_date=self.first_date,
+            description="7 Night Bahamas Cruise",
+        )
+        manager.catalog = self.catalog_for("Wonder of the Seas", self.first_date)
+        server.write_json_atomic(manager.catalog_file, manager.catalog)
+        manager.set_watching("3222", True, 80.0)
+        manager.set_pinned("ZH01", True)
+        manager._record_history(cruise_id)
+
+        with tempfile.TemporaryDirectory() as restore_temp:
+            restored_root = Path(restore_temp) / "data"
+            shutil.copytree(self.data_root, restored_root)
+            restored = server.CatalogManager(
+                restored_root,
+                restored_root / "options.json",
+            )
+
+            state = restored.state()
+            self.assertEqual(state["active_cruise_id"], cruise_id)
+            self.assertIn("3222", state["preferences"]["watching"])
+            self.assertEqual(state["preferences"]["pinned"], ["ZH01"])
+            item = next(item for item in state["catalog"]["items"] if item["id"] == "3222")
+            self.assertEqual(
+                restored.history.get_history(
+                    item=item,
+                    catalog=state["catalog"],
+                    options=restored.options,
+                )["summary"]["events"],
+                1,
+            )
+
     def test_duplicate_cruise_is_rejected(self):
         manager = server.CatalogManager(self.data_root, self.options_file)
         kwargs = {
@@ -672,6 +746,32 @@ class MultiCruiseTests(unittest.TestCase):
         self.assertEqual(config["cruise_line"], "royal-caribbean")
         self.assertEqual(config["ship"], "Freedom of the Seas")
         self.assertEqual(config["duration"], 5)
+
+    def test_http_rejects_non_ingress_clients_when_allowlist_is_configured(self):
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        server.DashboardHandler.manager = manager
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.DashboardHandler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        previous_allowed_clients = server.ALLOWED_CLIENTS
+        server.ALLOWED_CLIENTS = frozenset({"192.0.2.1"})
+        thread.start()
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(
+                    f"http://127.0.0.1:{httpd.server_port}/health",
+                    timeout=5,
+                )
+            error = caught.exception
+            try:
+                self.assertEqual(error.code, HTTPStatus.FORBIDDEN)
+                self.assertEqual(json.load(error), {"error": "Forbidden"})
+            finally:
+                error.close()
+        finally:
+            server.ALLOWED_CLIENTS = previous_allowed_clients
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
 
     def test_cruise_rejection_log_context_is_bounded_and_allowlisted(self):
         context = server.cruise_request_log_context(

@@ -1,4 +1,4 @@
-rootfs/etc/services.d/**/run text eol=lf
+royal-price-dashboard/rootfs/etc/services.d/**/run text eol=lf
 AGENTS.md export-ignore
 PROJECT_STATUS.md export-ignore
 PUBLIC_RELEASE.md export-ignore

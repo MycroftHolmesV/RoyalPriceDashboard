@@ -17,13 +17,17 @@ then, report suspected vulnerabilities privately to the repository owner.
 The App does not request host networking, host filesystem mappings, Docker or
 Supervisor access, privileged mode, or full Home Assistant access. It requests
 Ingress and Home Assistant API access; the API is used only to create persistent
-notifications for products the user explicitly watches.
+notifications for products the user explicitly watches. The distributed image
+also restricts its HTTP service to the Supervisor Ingress proxy and loopback
+clients.
 
 The App calls public Royal Caribbean and Celebrity endpoints through a
 checksum-pinned copy of the upstream browser. It does not ask for or store
 cruise-line account credentials. Catalogs, preferences, and SQLite history stay
 inside the App-private `/data` volume unless the user exports watch-list YAML.
 
-Container construction verifies the pinned upstream source checksum. A custom
-AppArmor profile and signed, multi-architecture release images remain release
-gates until they have been exercised on a real Home Assistant installation.
+Container construction verifies the pinned upstream source checksum. The
+release workflow prepares Cosign-signed `amd64` and `aarch64` images, but no
+image is published without an explicit matching GitHub release. A custom
+AppArmor profile remains a release gate until it has been developed in complain
+mode and exercised on a real Home Assistant installation.

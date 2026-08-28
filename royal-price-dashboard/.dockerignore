@@ -1,7 +1,3 @@
-.git
-.github
-.gitignore
-.gitattributes
 .env
 .venv
 __pycache__
@@ -15,5 +11,7 @@ tests
 *.sqlite3-wal
 .deployment-rollback
 .codex-remote-attachments
-AGENTS.md
-PROJECT_STATUS.md
+data
+catalog.json
+cruises.json
+preferences.json
