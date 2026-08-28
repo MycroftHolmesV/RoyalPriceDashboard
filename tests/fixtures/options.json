@@ -2,6 +2,7 @@
   "ship": "Example of the Seas",
   "sail_date": "2031-06-20",
   "currency": "USD",
-  "refresh_interval_hours": 168,
+  "watched_refresh_interval_hours": 12,
+  "unwatched_refresh_interval_hours": 24,
   "notifications_enabled": false
 }

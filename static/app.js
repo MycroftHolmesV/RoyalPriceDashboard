@@ -1,7 +1,8 @@
 "use strict";
 
-const APP_VERSION = "0.4.1";
+const APP_VERSION = "0.5.2";
 const ALERT_TIPS_STORAGE_KEY = "royal-price-dashboard.alert-tips-dismissed";
+const CHANGE_VISIT_STORAGE_PREFIX = "royal-price-dashboard.change-visit.";
 
 const model = {
   state: null,
@@ -16,6 +17,17 @@ const model = {
   openHistory: new Set(),
   busyHistory: new Set(),
   historyCache: new Map(),
+  changeScope: "all",
+  changePeriod: "since",
+  changeSessions: new Map(),
+  changesVisitedAt: null,
+  changesSince: null,
+  changes: null,
+  changesLoading: false,
+  changesError: "",
+  changesRequestKey: null,
+  watchedLatestChanges: new Map(),
+  watchedPriceStats: new Map(),
   alertTipsDismissed: false,
   onboarding: {
     open: false,
@@ -27,7 +39,6 @@ const model = {
     sailings: [],
     selectedSailing: null,
     currency: "USD",
-    refreshIntervalHours: 24,
     notificationsEnabled: true,
     busy: false,
     error: "",
@@ -63,6 +74,12 @@ const elements = {
   searchInput: document.querySelector("#search-input"),
   categorySelect: document.querySelector("#category-select"),
   sortSelect: document.querySelector("#sort-select"),
+  filters: document.querySelector("#catalog-filters"),
+  changesControls: document.querySelector("#changes-controls"),
+  changesHeading: document.querySelector("#changes-heading"),
+  changesPeriod: document.querySelector("#changes-period"),
+  changePeriodButtons: [...document.querySelectorAll("[data-change-period]")],
+  changeScopeButtons: [...document.querySelectorAll("[data-change-scope]")],
   resultsSummary: document.querySelector("#results-summary"),
   catalog: document.querySelector("#catalog"),
   emptyState: document.querySelector("#empty-state"),
@@ -72,6 +89,10 @@ const elements = {
   exportButton: document.querySelector("#export-button"),
   toast: document.querySelector("#toast"),
   tabs: [...document.querySelectorAll(".tab")],
+  historyChartDialog: document.querySelector("#history-chart-dialog"),
+  historyChartDialogTitle: document.querySelector("#history-chart-dialog-title"),
+  historyChartDialogBody: document.querySelector("#history-chart-dialog-body"),
+  historyChartDialogClose: document.querySelector("#history-chart-dialog-close"),
 };
 
 function node(tag, className, text) {
@@ -165,6 +186,70 @@ function setActiveTab(tabName) {
     tab.classList.toggle("active", tab.dataset.tab === tabName));
 }
 
+function boundedChangeSince(visitedAt, now = new Date()) {
+  if (!visitedAt) return null;
+  const visited = new Date(visitedAt);
+  if (Number.isNaN(visited.valueOf())) return null;
+  const startOfYesterday = new Date(now.valueOf());
+  startOfYesterday.setHours(0, 0, 0, 0);
+  startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+  return new Date(
+    Math.min(visited.valueOf(), startOfYesterday.valueOf()),
+  ).toISOString();
+}
+
+function initializeChangeSession(cruiseId) {
+  model.changesVisitedAt = null;
+  model.changesSince = null;
+  if (!cruiseId) return;
+  if (model.changeSessions.has(cruiseId)) {
+    const session = model.changeSessions.get(cruiseId);
+    model.changesVisitedAt = session.visitedAt;
+    model.changesSince = session.since;
+    return;
+  }
+
+  let visitedAt = null;
+  const openedAt = new Date().toISOString();
+  try {
+    const key = `${CHANGE_VISIT_STORAGE_PREFIX}${cruiseId}`;
+    visitedAt = window.localStorage.getItem(key);
+    if (visitedAt && Number.isNaN(new Date(visitedAt).valueOf())) visitedAt = null;
+  } catch (_error) {
+    visitedAt = null;
+  }
+  const since = boundedChangeSince(visitedAt);
+  const session = { visitedAt, since, openedAt, committed: false };
+  model.changeSessions.set(cruiseId, session);
+  model.changesVisitedAt = visitedAt;
+  model.changesSince = since;
+}
+
+function commitChangeSession(cruiseId) {
+  const session = model.changeSessions.get(cruiseId);
+  if (!session || session.committed) return;
+  try {
+    window.localStorage.setItem(
+      `${CHANGE_VISIT_STORAGE_PREFIX}${cruiseId}`,
+      session.openedAt,
+    );
+  } catch (_error) {
+    // A blocked browser store only disables cross-visit tracking.
+  }
+  session.committed = true;
+}
+
+function invalidateChanges({ clearLatest = true } = {}) {
+  model.changes = null;
+  model.changesLoading = false;
+  model.changesError = "";
+  model.changesRequestKey = null;
+  if (clearLatest) {
+    model.watchedLatestChanges.clear();
+    model.watchedPriceStats.clear();
+  }
+}
+
 function resetCatalogView(nextState) {
   setActiveTab(preferredTabForState(nextState));
   model.search = "";
@@ -174,6 +259,10 @@ function resetCatalogView(nextState) {
   model.busyHistory.clear();
   model.historyCache.clear();
   model.busyItems.clear();
+  model.changeScope = "all";
+  model.changePeriod = "since";
+  initializeChangeSession(nextState?.active_cruise_id || null);
+  invalidateChanges();
   elements.searchInput.value = "";
   elements.categorySelect.value = "";
 }
@@ -181,11 +270,16 @@ function resetCatalogView(nextState) {
 function acceptState(nextState) {
   const priorCruiseId = activeCruiseId();
   const priorGeneratedAt = model.state?.catalog?.generated_at;
+  const priorWatches = Object.keys(model.state?.preferences?.watching || {}).sort().join("\n");
   const nextCruiseId = nextState?.active_cruise_id || null;
+  const nextWatches = Object.keys(nextState?.preferences?.watching || {}).sort().join("\n");
   if (!model.state || priorCruiseId !== nextCruiseId) {
     resetCatalogView(nextState);
   } else if (priorGeneratedAt && priorGeneratedAt !== nextState?.catalog?.generated_at) {
     model.historyCache.clear();
+    invalidateChanges();
+  } else if (priorWatches !== nextWatches) {
+    invalidateChanges();
   }
   model.state = nextState;
   if (nextState?.setup_required) model.onboarding.open = true;
@@ -227,6 +321,7 @@ async function loadState({ quiet = false } = {}) {
     const nextState = await request("state");
     acceptState(nextState);
     render();
+    await loadChanges();
   } catch (error) {
     if (!quiet) showToast(error.message);
     elements.errorBanner.textContent = error.message;
@@ -338,11 +433,32 @@ async function mutateItem(itemId, action, body, successMessage) {
   } finally {
     model.busyItems.delete(itemId);
     render();
+    await loadChanges();
   }
 }
 
 function createBadge(text, className) {
   return node("span", `badge ${className}`, text);
+}
+
+function createPriceBadge(item) {
+  const stats = model.watchedPriceStats.get(item.id);
+  if (!stats?.record_low && !stats?.below_average) return null;
+  const count = Number(stats.recorded_price_count);
+  const average = formatCurrency(stats.average_price, item.currency);
+  const current = formatCurrency(stats.current_price, item.currency);
+  const priceCount = `${count} recorded price${count === 1 ? "" : "s"}`;
+  const recordLow = Boolean(stats.record_low);
+  const badge = createBadge(
+    recordLow ? "Record low" : "Below average",
+    recordLow ? "record-low" : "below-average",
+  );
+  const explanation = recordLow
+    ? `Record low. ${current} is the lowest of ${priceCount}; the average is ${average}.`
+    : `Below average. ${current} is below the ${average} average across ${priceCount}.`;
+  badge.title = explanation;
+  badge.setAttribute("aria-label", explanation);
+  return badge;
 }
 
 function historyPanelId(itemId) {
@@ -368,7 +484,70 @@ function shortDate(value) {
   }).format(parsed);
 }
 
-function createHistoryChart(history) {
+function changeRequestKey() {
+  const cruiseId = activeCruiseId();
+  if (!cruiseId) return null;
+  const generatedAt = model.state?.catalog?.generated_at || "no-catalog";
+  const watches = Object.keys(model.state?.preferences?.watching || {}).sort().join(",");
+  return [
+    cruiseId,
+    generatedAt,
+    model.changeScope,
+    model.changePeriod,
+    model.changePeriod === "since" ? model.changesSince || "recent" : "all",
+    watches,
+  ].join("|");
+}
+
+async function loadChanges({ force = false } = {}) {
+  const cruiseId = activeCruiseId();
+  const requestKey = changeRequestKey();
+  if (!cruiseId || !requestKey) return;
+  if (
+    !force
+    && model.changesRequestKey === requestKey
+    && (model.changes || model.changesLoading)
+  ) return;
+
+  model.changesLoading = true;
+  model.changesError = "";
+  model.changesRequestKey = requestKey;
+  renderCatalog();
+  const query = new URLSearchParams({
+    scope: model.changeScope,
+    limit: model.changePeriod === "all" ? "500" : "100",
+  });
+  if (model.changePeriod === "all") {
+    query.set("latest_only", "true");
+  } else if (model.changesSince) {
+    query.set("since", model.changesSince);
+  }
+  try {
+    const response = await request(
+      `cruises/${encodeURIComponent(cruiseId)}/changes?${query.toString()}`,
+    );
+    if (changeRequestKey() !== requestKey) return;
+    model.changes = response;
+    model.watchedLatestChanges = new Map(
+      Object.entries(response.watched_latest || {}),
+    );
+    model.watchedPriceStats = new Map(
+      Object.entries(response.watched_price_stats || {}),
+    );
+    commitChangeSession(cruiseId);
+  } catch (error) {
+    if (changeRequestKey() !== requestKey) return;
+    model.changesError = error.message;
+    model.changes = null;
+  } finally {
+    if (changeRequestKey() === requestKey) {
+      model.changesLoading = false;
+      renderCatalog();
+    }
+  }
+}
+
+function createHistoryChart(history, { expanded = false } = {}) {
   const points = history.points || [];
   const pricedPoints = points.filter(
     (point) => point.available && point.price !== null && point.price !== undefined,
@@ -377,9 +556,11 @@ function createHistoryChart(history) {
     return node("p", "history-empty", "No available price has been recorded yet.");
   }
 
-  const width = 760;
-  const height = 210;
-  const padding = { top: 18, right: 18, bottom: 38, left: 64 };
+  const width = expanded ? 1100 : 760;
+  const height = expanded ? 500 : 210;
+  const padding = expanded
+    ? { top: 34, right: 36, bottom: 68, left: 122 }
+    : { top: 18, right: 18, bottom: 38, left: 64 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
   const prices = pricedPoints.map((point) => Number(point.price));
@@ -405,14 +586,15 @@ function createHistoryChart(history) {
     + ((maximum - Number(price)) / (maximum - minimum)) * plotHeight;
 
   const svg = svgNode("svg", {
-    class: "history-chart",
+    class: expanded ? "history-chart expanded-history-chart" : "history-chart",
     viewBox: `0 0 ${width} ${height}`,
     role: "img",
     "aria-label": `${history.item.name} price history`,
   });
   svg.append(svgNode("title", {}, `${history.item.name} price history`));
 
-  for (const ratio of [0, 0.5, 1]) {
+  const gridRatios = expanded ? [0, 0.25, 0.5, 0.75, 1] : [0, 0.5, 1];
+  for (const ratio of gridRatios) {
     const y = padding.top + ratio * plotHeight;
     const value = maximum - ratio * (maximum - minimum);
     svg.append(svgNode("line", {
@@ -439,7 +621,7 @@ function createHistoryChart(history) {
         class: "history-unavailable-point",
         cx: xFor(index),
         cy: padding.top + plotHeight,
-        r: 4,
+        r: expanded ? 6 : 4,
       }));
       return;
     }
@@ -460,7 +642,7 @@ function createHistoryChart(history) {
       class: "history-price-point",
       cx: xFor(index),
       cy: yFor(point.price),
-      r: 4.5,
+      r: expanded ? 7 : 4.5,
     });
     marker.append(svgNode(
       "title",
@@ -516,6 +698,28 @@ function toggleHistory(itemId) {
   renderCatalog();
 }
 
+function closeExpandedHistory() {
+  if (elements.historyChartDialog.open) {
+    elements.historyChartDialog.close();
+  } else {
+    elements.historyChartDialog.removeAttribute("open");
+  }
+  elements.historyChartDialogBody.replaceChildren();
+}
+
+function openExpandedHistory(history) {
+  elements.historyChartDialogTitle.textContent = history.item.name;
+  elements.historyChartDialogBody.replaceChildren(
+    createHistoryChart(history, { expanded: true }),
+  );
+  if (typeof elements.historyChartDialog.showModal === "function") {
+    elements.historyChartDialog.showModal();
+  } else {
+    elements.historyChartDialog.setAttribute("open", "");
+  }
+  elements.historyChartDialogClose.focus();
+}
+
 function createHistoryPanel(item) {
   const panel = node("section", "history-panel");
   panel.id = historyPanelId(item.id);
@@ -561,7 +765,22 @@ function createHistoryPanel(item) {
     node("strong", "history-stat-value", String(history.summary.events)),
   );
   summary.append(eventStat);
-  panel.append(summary, createHistoryChart(history));
+  panel.append(summary);
+  const chart = createHistoryChart(history);
+  if (chart.nodeName.toLowerCase() === "svg") {
+    const chartTrigger = node("button", "history-chart-trigger");
+    chartTrigger.type = "button";
+    chartTrigger.setAttribute(
+      "aria-label",
+      `Expand price history chart for ${history.item.name}`,
+    );
+    chartTrigger.title = "Open a larger price history chart";
+    chartTrigger.append(chart);
+    chartTrigger.addEventListener("click", () => openExpandedHistory(history));
+    panel.append(chartTrigger);
+  } else {
+    panel.append(chart);
+  }
 
   const points = history.points || [];
   const note = points.length <= 1
@@ -590,6 +809,17 @@ function createDescriptionDisclosure(item) {
   return details;
 }
 
+function lastPriceChangeCopy(change, currency) {
+  const delta = Number(change?.price_delta);
+  const price = Number(change?.price);
+  if (!Number.isFinite(delta) || !Number.isFinite(price) || delta === 0) return null;
+  const direction = delta < 0 ? "down" : "up";
+  return (
+    `Last price change ${shortDate(change.observed_at)}: ${direction} `
+    + `${formatCurrency(Math.abs(delta), currency)} to ${formatCurrency(price, currency)}`
+  );
+}
+
 function createRow(item, data) {
   const isPinned = data.pinned.has(item.id);
   const watch = data.watching[item.id];
@@ -600,6 +830,10 @@ function createRow(item, data) {
   const titleLine = node("div", "item-title-line");
   titleLine.append(node("h2", "item-name", item.name));
   if (watch) titleLine.append(createBadge("Watching", "watching"));
+  if (watch) {
+    const priceBadge = createPriceBadge(item);
+    if (priceBadge) titleLine.append(priceBadge);
+  }
   if (isPinned) titleLine.append(createBadge("Pinned", "pinned"));
   identity.append(titleLine);
 
@@ -609,6 +843,15 @@ function createRow(item, data) {
   codeLine.append("Watch code ");
   codeLine.append(node("code", "", `${item.prefix} / ${item.product}`));
   identity.append(codeLine);
+  if (watch && model.changes && !model.changesError) {
+    const latestChange = model.watchedLatestChanges.get(item.id);
+    const changeCopy = lastPriceChangeCopy(latestChange, item.currency);
+    identity.append(node(
+      "p",
+      `last-price-change${Number(latestChange?.price_delta) < 0 ? " decrease" : ""}`,
+      changeCopy || "No price changes recorded yet.",
+    ));
+  }
   if (item.description) identity.append(createDescriptionDisclosure(item));
   row.append(identity);
 
@@ -706,6 +949,222 @@ function createRow(item, data) {
   return row;
 }
 
+function changeMovement(change) {
+  const currency = change.item.currency;
+  const priorPrice = change.previous_price;
+  const price = change.price;
+  const delta = change.price_delta;
+  if (change.previous_available && !change.available) {
+    return {
+      title: "Price became unavailable",
+      detail: priorPrice === null
+        ? "No current public price"
+        : `Previously ${formatCurrency(priorPrice, currency)}`,
+      className: "unavailable-change",
+    };
+  }
+  if (!change.previous_available && change.available) {
+    return {
+      title: "Price is available again",
+      detail: `Now ${formatCurrency(price, currency)}`,
+      className: "available-change",
+    };
+  }
+  if (delta !== null && Number(delta) !== 0) {
+    const movedDown = Number(delta) < 0;
+    return {
+      title: `${movedDown ? "Down" : "Up"} ${formatCurrency(Math.abs(delta), currency)}`,
+      detail: `${formatCurrency(priorPrice, currency)} → ${formatCurrency(price, currency)}`,
+      className: movedDown ? "decrease" : "increase",
+    };
+  }
+  return {
+    title: "Availability changed",
+    detail: price === null ? "No current public price" : formatCurrency(price, currency),
+    className: "availability-change",
+  };
+}
+
+async function openHistoryFromChange(itemId) {
+  await loadHistory(itemId);
+  const history = model.historyCache.get(itemId);
+  if (!history) return;
+  if (history.error) {
+    showToast(history.error);
+    return;
+  }
+  openExpandedHistory(history);
+}
+
+function createChangeRow(change, data) {
+  const item = change.item;
+  const catalogItem = data.items.find((candidate) => candidate.id === item.id) || item;
+  const watch = data.watching[item.id];
+  const isPinned = data.pinned.has(item.id);
+  const isBusy = model.busyItems.has(item.id);
+  const isHistoryBusy = model.busyHistory.has(item.id);
+  const movement = changeMovement(change);
+  const row = node("article", "change-row");
+  const identity = node("div", "change-identity");
+  const titleLine = node("div", "item-title-line");
+  titleLine.append(node("h2", "item-name", item.name));
+  if (watch) titleLine.append(createBadge("Watching", "watching"));
+  if (isPinned) titleLine.append(createBadge("Pinned", "pinned"));
+  identity.append(titleLine);
+  identity.append(node(
+    "p",
+    "item-meta",
+    [item.category, item.subcategory].filter(Boolean).join(" · "),
+  ));
+
+  const movementBlock = node("div", `change-movement ${movement.className}`);
+  movementBlock.append(
+    node("strong", "change-title", movement.title),
+    node("span", "change-detail", movement.detail),
+  );
+
+  const when = node("div", "change-when");
+  when.append(
+    node("time", "change-time", `Changed ${formatTimestamp(change.observed_at)}`),
+  );
+
+  const actions = node("div", "change-actions");
+  const watchButton = node(
+    "button",
+    `row-action ${watch ? "unwatch" : "watch"}`,
+    watch ? "Unwatch" : "＋ Watch",
+  );
+  watchButton.type = "button";
+  watchButton.disabled = isBusy || (!watch && !catalogItem.price_available);
+  watchButton.title = watch
+    ? "Stop price-drop alerts for this item"
+    : catalogItem.price_available
+      ? "Alert only if a later price drops below today's price"
+      : "A current price is required before this item can be watched";
+  watchButton.addEventListener("click", () => {
+    if (watch) {
+      mutateItem(item.id, "watch", { watching: false }, "Watch removed.");
+      return;
+    }
+    mutateItem(
+      item.id,
+      "watch",
+      { watching: true },
+      `Watching ${item.name} below ${formatPrice(catalogItem)}.`,
+    );
+  });
+
+  const pinButton = node(
+    "button",
+    "row-action pin-action",
+    isPinned ? "★ Unpin" : "☆ Pin",
+  );
+  pinButton.type = "button";
+  pinButton.disabled = isBusy;
+  pinButton.title = isPinned
+    ? "Remove this item from your pinned shortlist"
+    : "Add this item to your pinned shortlist";
+  pinButton.addEventListener("click", () =>
+    mutateItem(
+      item.id,
+      "pin",
+      { pinned: !isPinned },
+      isPinned ? "Item unpinned." : "Item pinned. It still appears in All.",
+    ));
+
+  const history = node(
+    "button",
+    "row-action history-action",
+    isHistoryBusy ? "Loading…" : "View history",
+  );
+  history.type = "button";
+  history.disabled = isBusy || isHistoryBusy;
+  history.addEventListener("click", () => openHistoryFromChange(item.id));
+  actions.append(watchButton, pinButton, history);
+  when.append(actions);
+  row.append(identity, movementBlock, when);
+  return row;
+}
+
+function renderChanges() {
+  const data = currentData();
+  const response = model.changes;
+  const changes = response?.changes || [];
+  const showingAllChanges = model.changePeriod === "all";
+  elements.changesHeading.textContent = showingAllChanges
+    ? "All changed items"
+    : "Changes since last visit";
+  if (showingAllChanges) {
+    elements.changesPeriod.textContent = (
+      "Each product with a recorded price or availability change appears once, newest first."
+    );
+  } else if (model.changesVisitedAt && model.changesSince) {
+    const visitWasBounded = (
+      new Date(model.changesSince).valueOf()
+      < new Date(model.changesVisitedAt).valueOf()
+    );
+    elements.changesPeriod.textContent = visitWasBounded
+      ? `Showing changes since ${formatTimestamp(model.changesSince)}. A minimum one-day lookback keeps same-day visits useful.`
+      : `This device last opened the cruise on ${formatTimestamp(model.changesVisitedAt)}.`;
+  } else {
+    elements.changesPeriod.textContent = (
+      "First visit on this device, so the latest recorded changes are shown."
+    );
+  }
+  elements.changePeriodButtons.forEach((button) => {
+    const active = button.dataset.changePeriod === model.changePeriod;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  elements.changeScopeButtons.forEach((button) => {
+    const active = button.dataset.changeScope === model.changeScope;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+
+  if (model.changesLoading && !response) {
+    elements.catalog.replaceChildren(node("p", "changes-message", "Loading price changes…"));
+  } else if (model.changesError) {
+    const message = node("div", "changes-message error");
+    message.append(node("p", "", model.changesError));
+    const retry = node("button", "row-action", "Retry changes");
+    retry.type = "button";
+    retry.addEventListener("click", () => loadChanges({ force: true }));
+    message.append(retry);
+    elements.catalog.replaceChildren(message);
+  } else {
+    elements.catalog.replaceChildren(
+      ...changes.map((change) => createChangeRow(change, data)),
+    );
+  }
+
+  const empty = !model.changesLoading && !model.changesError && changes.length === 0;
+  elements.emptyState.classList.toggle("hidden", !empty);
+  if (empty) {
+    const hasWatches = Object.keys(data.watching).length > 0;
+    if (model.changeScope === "watched" && !hasWatches) {
+      elements.emptyTitle.textContent = "Nothing watched yet";
+      elements.emptyCopy.textContent = "Choose All items here, or add a watch from the catalog.";
+    } else if (model.changeScope === "watched") {
+      elements.emptyTitle.textContent = "No watched changes here";
+      elements.emptyCopy.textContent = "Choose All items to include changes elsewhere in the catalog.";
+    } else {
+      elements.emptyTitle.textContent = showingAllChanges ? "No changed items yet" : "All caught up";
+      elements.emptyCopy.textContent = showingAllChanges
+        ? "No changes have been recorded beyond the initial price baseline."
+        : "No recorded price or availability changes in this visit window.";
+    }
+  }
+
+  const shown = changes.length;
+  const scopeLabel = model.changeScope === "watched" ? "watched " : "";
+  const resultLabel = showingAllChanges ? "changed item" : "change";
+  const more = response?.truncated ? ` First ${response.limit} shown.` : "";
+  elements.resultsSummary.textContent = (
+    `${shown} ${scopeLabel}${resultLabel}${shown === 1 ? "" : "s"} shown.${more}`
+  );
+}
+
 function resetOnboarding() {
   model.onboarding = {
     open: true,
@@ -717,7 +1176,6 @@ function resetOnboarding() {
     sailings: [],
     selectedSailing: null,
     currency: "USD",
-    refreshIntervalHours: 24,
     notificationsEnabled: true,
     busy: false,
     error: "",
@@ -991,7 +1449,6 @@ async function createCruise() {
         duration: selectedSailing.duration,
         description: selectedSailing.description,
         currency,
-        refresh_interval_hours: Number(onboarding.refreshIntervalHours),
         notifications_enabled: onboarding.notificationsEnabled,
       }),
     });
@@ -1000,6 +1457,7 @@ async function createCruise() {
     model.onboarding.busy = false;
     showToast("Cruise added. Its first catalog can take a few minutes to build.");
     render();
+    await loadChanges();
   } catch (error) {
     onboarding.busy = false;
     onboarding.error = error.message;
@@ -1049,28 +1507,6 @@ function renderSettingsStep() {
   currencyHelp.id = "currency-help";
   currencyField.append(currencyHelp);
   settings.append(currencyField);
-
-  const intervalField = node("label", "field");
-  intervalField.append(node("span", "", "Automatic refresh"));
-  const interval = node("select");
-  for (const [hours, label] of [
-    [6, "Every 6 hours"],
-    [12, "Every 12 hours"],
-    [24, "Once a day"],
-    [48, "Every 2 days"],
-    [72, "Every 3 days"],
-    [168, "Once a week"],
-  ]) {
-    const option = node("option", "", label);
-    option.value = String(hours);
-    option.selected = hours === Number(model.onboarding.refreshIntervalHours);
-    interval.append(option);
-  }
-  interval.addEventListener("change", () => {
-    model.onboarding.refreshIntervalHours = Number(interval.value);
-  });
-  intervalField.append(interval);
-  settings.append(intervalField);
 
   const notificationField = node("label", "check-field");
   const notifications = node("input");
@@ -1184,6 +1620,7 @@ async function switchCruise(cruiseId) {
   } finally {
     model.switchingCruise = false;
     render();
+    await loadChanges();
   }
 }
 
@@ -1215,10 +1652,19 @@ async function removeCruise() {
   } finally {
     model.removingCruise = false;
     render();
+    await loadChanges();
   }
 }
 
 function renderCatalog() {
+  const showingChanges = model.activeTab === "changes";
+  elements.filters.classList.toggle("hidden", showingChanges);
+  elements.changesControls.classList.toggle("hidden", !showingChanges);
+  if (showingChanges) {
+    renderChanges();
+    return;
+  }
+
   const data = currentData();
   const items = filteredItems(data);
   elements.catalog.replaceChildren(...items.map((item) => createRow(item, data)));
@@ -1383,6 +1829,33 @@ elements.tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
     setActiveTab(tab.dataset.tab);
     renderCatalog();
+    if (tab.dataset.tab === "changes") loadChanges();
+  });
+});
+
+elements.changeScopeButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    const scope = button.dataset.changeScope;
+    if (!scope || scope === model.changeScope) return;
+    model.changeScope = scope;
+    model.changes = null;
+    model.changesError = "";
+    model.changesRequestKey = null;
+    renderCatalog();
+    loadChanges();
+  });
+});
+
+elements.changePeriodButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    const period = button.dataset.changePeriod;
+    if (!period || period === model.changePeriod) return;
+    model.changePeriod = period;
+    model.changes = null;
+    model.changesError = "";
+    model.changesRequestKey = null;
+    renderCatalog();
+    loadChanges();
   });
 });
 
@@ -1405,6 +1878,13 @@ elements.refreshButton.addEventListener("click", refreshPrices);
 elements.exportButton.addEventListener("click", exportWatches);
 elements.removeCruiseButton.addEventListener("click", removeCruise);
 elements.completedRemoveButton.addEventListener("click", removeCruise);
+elements.historyChartDialogClose.addEventListener("click", closeExpandedHistory);
+elements.historyChartDialog.addEventListener("click", (event) => {
+  if (event.target === elements.historyChartDialog) closeExpandedHistory();
+});
+elements.historyChartDialog.addEventListener("close", () => {
+  elements.historyChartDialogBody.replaceChildren();
+});
 elements.dismissAlertTips.addEventListener("click", () => {
   setAlertTipsDismissed(true);
 });

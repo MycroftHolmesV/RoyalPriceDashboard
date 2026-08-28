@@ -662,6 +662,72 @@ h1 {
   background: var(--blue);
 }
 
+.changes-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+  background: var(--surface-muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.changes-controls strong {
+  color: var(--navy);
+}
+
+.changes-controls p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.change-options {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.change-option {
+  display: grid;
+  gap: 4px;
+}
+
+.change-option-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.change-scope {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.scope-button {
+  min-height: 34px;
+  padding: 0 12px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.scope-button.active {
+  color: white;
+  background: var(--blue);
+}
+
 .filters {
   display: grid;
   grid-template-columns: minmax(220px, 2fr) minmax(180px, 1fr) minmax(180px, 1fr);
@@ -753,6 +819,18 @@ h1 {
   font-size: 0.82rem;
 }
 
+.last-price-change {
+  margin: 7px 0 0;
+  color: var(--amber);
+  font-size: 0.82rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.last-price-change.decrease {
+  color: var(--green);
+}
+
 .item-code code {
   padding: 2px 5px;
   color: #31506f;
@@ -808,6 +886,16 @@ h1 {
 .badge.watching {
   color: #075a3b;
   background: #d9f4e8;
+}
+
+.badge.below-average {
+  color: #07527a;
+  background: #d9effc;
+}
+
+.badge.record-low {
+  color: #ffffff;
+  background: #087a52;
 }
 
 .badge.pinned {
@@ -934,6 +1022,27 @@ h1 {
   font-family: inherit;
 }
 
+.history-chart-trigger {
+  display: block;
+  width: 100%;
+  padding: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: zoom-in;
+}
+
+.history-chart-trigger:hover,
+.history-chart-trigger:focus-visible {
+  background: rgba(8, 120, 209, 0.05);
+  border-color: rgba(8, 120, 209, 0.35);
+  outline: none;
+}
+
+.history-chart-trigger .history-chart {
+  pointer-events: none;
+}
+
 .history-grid-line {
   stroke: var(--line);
   stroke-width: 1;
@@ -972,6 +1081,132 @@ h1 {
   margin: 8px 0 0;
   color: var(--muted);
   font-size: 0.8rem;
+}
+
+.change-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.5fr) minmax(210px, 0.8fr) minmax(250px, 0.9fr);
+  gap: 18px;
+  align-items: center;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.change-row:last-child {
+  border-bottom: 0;
+}
+
+.change-row:hover {
+  background: #f8fbfe;
+}
+
+.change-movement,
+.change-when {
+  display: grid;
+  gap: 4px;
+}
+
+.change-title {
+  color: var(--navy);
+  font-variant-numeric: tabular-nums;
+}
+
+.change-movement.decrease .change-title,
+.change-movement.available-change .change-title {
+  color: var(--green);
+}
+
+.change-movement.increase .change-title,
+.change-movement.unavailable-change .change-title {
+  color: var(--red);
+}
+
+.change-detail,
+.change-time {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.change-when {
+  justify-items: end;
+  text-align: right;
+}
+
+.change-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: flex-end;
+}
+
+.changes-message {
+  padding: 32px 18px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.changes-message.error {
+  color: var(--red);
+}
+
+.history-chart-dialog {
+  width: min(1280px, calc(100% - 28px));
+  max-width: none;
+  max-height: calc(100vh - 28px);
+  padding: 0;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.35);
+}
+
+.history-chart-dialog::backdrop {
+  background: rgba(5, 20, 35, 0.72);
+  backdrop-filter: blur(3px);
+}
+
+.history-chart-dialog-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: calc(100vh - 28px);
+}
+
+.history-chart-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.history-chart-dialog-header h2 {
+  margin: 3px 0 0;
+  font-size: 1.15rem;
+}
+
+.history-chart-dialog-body {
+  padding: 18px;
+  overflow: auto;
+  background: var(--surface-muted);
+}
+
+.expanded-history-chart {
+  width: 100%;
+  min-width: 860px;
+  max-height: none;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.expanded-history-chart .history-axis-label {
+  font-size: 17px;
+  font-weight: 650;
 }
 
 .history-error {
@@ -1053,6 +1288,47 @@ h1 {
 
   .price-row {
     grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .changes-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .change-scope {
+    width: 100%;
+  }
+
+  .change-options {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scope-button {
+    flex: 1;
+  }
+
+  .change-row {
+    grid-template-columns: 1fr;
+    gap: 11px;
+  }
+
+  .change-when {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .change-actions {
+    justify-content: flex-start;
+  }
+
+  .history-chart-dialog-header {
+    align-items: flex-start;
+  }
+
+  .history-chart-dialog-body {
+    padding: 10px;
   }
 
   .item-controls {
@@ -1147,11 +1423,24 @@ h1 {
   }
 
   .tabs {
-    overflow-x: auto;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2px;
+    padding: 8px 6px 0;
+    overflow-x: visible;
   }
 
   .tab {
-    flex: 1 0 auto;
+    min-width: 0;
+    min-height: 44px;
+    padding: 10px 2px;
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+
+  .tab::after {
+    right: 4px;
+    left: 4px;
   }
 
   .price-row {
@@ -1255,7 +1544,8 @@ h1 {
     border-color: #3a4c5d;
   }
 
-  .price-row:hover {
+  .price-row:hover,
+  .change-row:hover {
     background: #1a2937;
   }
 

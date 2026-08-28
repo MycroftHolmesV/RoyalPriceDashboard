@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.5.2 (private patch)
+
+- Default Changes to all catalog items so the everyday summary does not appear
+  empty merely because no watched product has changed.
+- Give **Since last visit** a minimum lookback to the start of yesterday in the
+  browser's local time, preventing another visit today from immediately hiding
+  useful recent changes.
+- Add an **All changed items** option that shows each product with at least one
+  recorded price or availability change once, ordered by its latest change and
+  labeled with the change date.
+- Fit all four catalog tabs across phone widths so **All** and **Changes** stay
+  visible together without horizontal scrolling.
+
+## 0.5.1 (private patch)
+
+- Open **View history** from a Changes card in the expanded history dialog
+  without leaving the Changes view or inheriting an unrelated catalog scroll
+  position.
+- Add Watch/Unwatch and Pin/Unpin actions directly to Changes cards, using the
+  same explicit alert and shortlist semantics as the catalog.
+
+## 0.5.0 (private release candidate)
+
+- Refresh cruises with at least one explicit product watch every 12 hours and
+  cruises with no watches every 24 hours by default. Pins do not select the
+  faster schedule.
+- Add `watched_refresh_interval_hours` and
+  `unwatched_refresh_interval_hours` Home Assistant App options for global YAML
+  overrides from 1 through 168 hours. Both are optional so an existing saved
+  configuration can upgrade without first adding the new keys.
+- Remove the per-cruise refresh selector from onboarding and report each
+  cruise's effective watched or unwatched schedule through the state API.
+- Retain the legacy `refresh_interval_hours` option as an optional unwatched
+  fallback for upgrade compatibility.
+- Add a **Changes** view that defaults to watched products, can include all
+  products, and shows changes since that browser last visited the cruise.
+- Show the most recent actual price-change date, amount, and resulting price on
+  watched product cards without treating the initial history baseline as a
+  change.
+- Add mutually exclusive **Record low** and **Below average** badges to watched
+  products with at least two saved available price points, with accessible
+  comparison details and explicit recorded-price semantics.
+- Make compact history charts selectable so they open in a larger, accessible
+  dialog with clearer price-axis labels and narrow-screen scrolling.
+
 ## 0.4.1 (private release candidate)
 
 - Expand the compact, searchable **Show description** disclosure from shore

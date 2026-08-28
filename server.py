@@ -28,7 +28,7 @@ from typing import Any
 
 APP_ROOT = Path(__file__).resolve().parent
 STATIC_ROOT = APP_ROOT / "static"
-APP_VERSION = "0.4.1"
+APP_VERSION = "0.5.2"
 DATA_ROOT = Path(os.environ.get("ROYAL_PRICE_DATA_DIR", "/data"))
 OPTIONS_FILE = Path(
     os.environ.get("ROYAL_PRICE_OPTIONS_FILE", "/data/options.json")
@@ -65,7 +65,8 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "ship": None,
     "sail_date": None,
     "currency": "USD",
-    "refresh_interval_hours": 24,
+    "watched_refresh_interval_hours": 12,
+    "unwatched_refresh_interval_hours": 24,
     "notifications_enabled": True,
 }
 
@@ -302,7 +303,9 @@ def cruise_completion(
 
 
 def load_options(path: Path) -> dict[str, Any]:
-    raw = read_json(path, DEFAULT_OPTIONS)
+    raw = read_json(path, {})
+    if not isinstance(raw, dict):
+        raise DashboardError("App options must be a JSON object.")
     options = {**DEFAULT_OPTIONS, **raw}
 
     raw_ship = options.get("ship")
@@ -325,15 +328,36 @@ def load_options(path: Path) -> dict[str, Any]:
     if not re.fullmatch(r"[A-Z]{3}", currency):
         raise DashboardError("currency must be a three-letter code.")
 
-    interval = int(options["refresh_interval_hours"])
-    if not 1 <= interval <= 168:
-        raise DashboardError("refresh_interval_hours must be between 1 and 168.")
+    def refresh_interval(option_name: str, value: Any) -> int:
+        try:
+            interval = int(value)
+        except (TypeError, ValueError) as error:
+            raise DashboardError(f"{option_name} must be a whole number.") from error
+        if not 1 <= interval <= 168:
+            raise DashboardError(f"{option_name} must be between 1 and 168.")
+        return interval
+
+    watched_interval = refresh_interval(
+        "watched_refresh_interval_hours",
+        options["watched_refresh_interval_hours"],
+    )
+    unwatched_interval = refresh_interval(
+        "unwatched_refresh_interval_hours",
+        raw.get(
+            "unwatched_refresh_interval_hours",
+            raw.get(
+                "refresh_interval_hours",
+                DEFAULT_OPTIONS["unwatched_refresh_interval_hours"],
+            ),
+        ),
+    )
 
     return {
         "ship": ship,
         "sail_date": sail_date,
         "currency": currency,
-        "refresh_interval_hours": interval,
+        "watched_refresh_interval_hours": watched_interval,
+        "unwatched_refresh_interval_hours": unwatched_interval,
         "notifications_enabled": bool(options["notifications_enabled"]),
     }
 
@@ -402,7 +426,10 @@ def validate_cruise_config(
         interval = int(
             raw.get(
                 "refresh_interval_hours",
-                fallback.get("refresh_interval_hours", 24),
+                fallback.get(
+                    "unwatched_refresh_interval_hours",
+                    DEFAULT_OPTIONS["unwatched_refresh_interval_hours"],
+                ),
             )
         )
     except (TypeError, ValueError) as error:
@@ -902,6 +929,86 @@ class HistoryStore:
             "points": points,
         }
 
+    def get_changes(
+        self,
+        *,
+        catalog: dict[str, Any],
+        options: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return actual changes, excluding each product's initial baseline."""
+        key, _ship, _sail_date, _currency = self._sailing_details(catalog, options)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, product_id, observed_at, price, available
+                FROM price_history
+                WHERE sailing_key = ?
+                ORDER BY product_id, observed_at, id
+                """,
+                (key,),
+            ).fetchall()
+
+        prior_by_product: dict[str, sqlite3.Row] = {}
+        available_prices_by_product: dict[str, list[float]] = {}
+        changes: list[dict[str, Any]] = []
+        latest_price_changes: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            product_id = str(row["product_id"])
+            if bool(row["available"]) and row["price"] is not None:
+                available_prices_by_product.setdefault(product_id, []).append(
+                    float(row["price"])
+                )
+            previous = prior_by_product.get(product_id)
+            prior_by_product[product_id] = row
+            if previous is None:
+                continue
+
+            previous_price = (
+                float(previous["price"])
+                if previous["price"] is not None
+                else None
+            )
+            price = float(row["price"]) if row["price"] is not None else None
+            event = {
+                "product_id": product_id,
+                "observed_at": row["observed_at"],
+                "previous_price": previous_price,
+                "price": price,
+                "previous_available": bool(previous["available"]),
+                "available": bool(row["available"]),
+                "price_delta": (
+                    round(price - previous_price, 2)
+                    if price is not None and previous_price is not None
+                    else None
+                ),
+                "_history_id": int(row["id"]),
+            }
+            changes.append(event)
+            if event["price_delta"] not in (None, 0):
+                latest_price_changes[product_id] = event
+
+        changes.sort(
+            key=lambda event: (event["observed_at"], event["_history_id"]),
+            reverse=True,
+        )
+        for event in changes:
+            event.pop("_history_id", None)
+        price_stats = {
+            product_id: {
+                "recorded_price_count": len(prices),
+                "average_price": round(sum(prices) / len(prices), 2),
+                "lowest_price": min(prices),
+                "highest_price": max(prices),
+            }
+            for product_id, prices in available_prices_by_product.items()
+            if prices
+        }
+        return {
+            "changes": changes,
+            "latest_price_changes": latest_price_changes,
+            "price_stats": price_stats,
+        }
+
     def delete_sailing(self, options: dict[str, Any]) -> int:
         key = sailing_key(
             str(options["ship"]),
@@ -1329,6 +1436,9 @@ class CatalogManager:
                     runtime.config,
                     runtime.catalog,
                 )
+                refresh_mode, refresh_interval = self._refresh_schedule(runtime)
+                cruise_config["refresh_mode"] = refresh_mode
+                cruise_config["refresh_interval_hours"] = refresh_interval
                 completion = cruise_completion(cruise_config)
                 cruises.append(
                     {
@@ -1361,6 +1471,14 @@ class CatalogManager:
                     active.config,
                     active.catalog,
                 )
+                active_refresh_mode, active_refresh_interval = (
+                    self._refresh_schedule(active)
+                )
+                active_config["refresh_mode"] = active_refresh_mode
+                active_config["refresh_interval_hours"] = active_refresh_interval
+            else:
+                active_refresh_mode = None
+                active_refresh_interval = None
             status = {
                 **active_completion,
                 "refreshing": active.refreshing if active is not None else False,
@@ -1378,6 +1496,8 @@ class CatalogManager:
                     and self._refresh_cooldown_seconds(active, now) > 0
                     else None
                 ),
+                "refresh_mode": active_refresh_mode,
+                "refresh_interval_hours": active_refresh_interval,
                 "last_error": active.last_error if active is not None else None,
                 "last_warning": active.last_warning if active is not None else None,
                 "history": {
@@ -1456,6 +1576,166 @@ class CatalogManager:
         except (OSError, sqlite3.Error, ValueError) as error:
             self.history_error = str(error)
             raise DashboardError(f"Could not read price history: {error}") from error
+
+    def changes_for(
+        self,
+        cruise_id: str | None = None,
+        *,
+        scope: str = "watched",
+        since: str | None = None,
+        limit: int = 100,
+        latest_only: bool = False,
+    ) -> dict[str, Any]:
+        if scope not in {"watched", "all"}:
+            raise DashboardError("Changes scope must be watched or all.")
+        if not 1 <= limit <= 500:
+            raise DashboardError("Changes limit must be between 1 and 500.")
+
+        since_at: datetime | None = None
+        if since:
+            try:
+                since_at = datetime.fromisoformat(since)
+            except (TypeError, ValueError) as error:
+                raise DashboardError("Changes since must be an ISO timestamp.") from error
+            if since_at.tzinfo is None:
+                raise DashboardError("Changes since must include a timezone.")
+            since_at = since_at.astimezone(timezone.utc)
+
+        with self.lock:
+            runtime = self._runtime(cruise_id)
+            catalog_copy = copy.deepcopy(runtime.catalog)
+            options_copy = copy.deepcopy(runtime.config)
+            watched_ids = set(runtime.preferences.get("watching", {}))
+            history = self.history
+        if history is None:
+            raise DashboardError(
+                f"Price history is unavailable: {self.history_error or 'unknown error'}"
+            )
+
+        try:
+            history_changes = history.get_changes(
+                catalog=catalog_copy,
+                options=options_copy,
+            )
+        except (OSError, sqlite3.Error, ValueError) as error:
+            self.history_error = str(error)
+            raise DashboardError(f"Could not read price changes: {error}") from error
+
+        item_index = {
+            str(item["id"]): item
+            for item in catalog_copy.get("items", [])
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+        allowed_ids = watched_ids if scope == "watched" else set(item_index)
+
+        def is_after_since(event: dict[str, Any]) -> bool:
+            if since_at is None:
+                return True
+            try:
+                observed_at = datetime.fromisoformat(str(event["observed_at"]))
+            except (TypeError, ValueError):
+                return False
+            if observed_at.tzinfo is None:
+                observed_at = observed_at.replace(tzinfo=timezone.utc)
+            return observed_at.astimezone(timezone.utc) > since_at
+
+        def decorate(event: dict[str, Any]) -> dict[str, Any] | None:
+            item = item_index.get(str(event["product_id"]))
+            if item is None:
+                return None
+            return {
+                **copy.deepcopy(event),
+                "item": {
+                    "id": item["id"],
+                    "name": item["name"],
+                    "category": item.get("category"),
+                    "subcategory": item.get("subcategory"),
+                    "currency": item.get("currency", options_copy["currency"]),
+                    "unit": item.get("unit"),
+                },
+            }
+
+        matching = [
+            event
+            for event in history_changes["changes"]
+            if event["product_id"] in allowed_ids
+            and event["product_id"] in item_index
+            and is_after_since(event)
+        ]
+        if latest_only:
+            seen_product_ids: set[str] = set()
+            latest_matching: list[dict[str, Any]] = []
+            for event in matching:
+                product_id = str(event["product_id"])
+                if product_id in seen_product_ids:
+                    continue
+                seen_product_ids.add(product_id)
+                latest_matching.append(event)
+            matching = latest_matching
+        changes = [
+            decorated
+            for event in matching[:limit]
+            if (decorated := decorate(event)) is not None
+        ]
+        watched_latest = {
+            product_id: decorated
+            for product_id, event in history_changes["latest_price_changes"].items()
+            if product_id in watched_ids
+            and (decorated := decorate(event)) is not None
+        }
+
+        def watched_price_stat(
+            product_id: str,
+            stats: dict[str, Any],
+        ) -> dict[str, Any] | None:
+            item = item_index.get(product_id)
+            if item is None:
+                return None
+            raw_price = item.get("price")
+            if raw_price is None or not bool(item.get("price_available", True)):
+                return None
+            current_price = round(float(raw_price), 2)
+            average_price = float(stats["average_price"])
+            lowest_price = float(stats["lowest_price"])
+            highest_price = float(stats["highest_price"])
+            recorded_price_count = int(stats["recorded_price_count"])
+            enough_history = recorded_price_count >= 2
+            return {
+                **copy.deepcopy(stats),
+                "current_price": current_price,
+                "below_average": (
+                    enough_history and current_price < average_price - 0.005
+                ),
+                "record_low": (
+                    enough_history
+                    and current_price <= lowest_price + 0.005
+                    and highest_price > current_price + 0.005
+                ),
+            }
+
+        watched_price_stats = {
+            product_id: result
+            for product_id, stats in history_changes["price_stats"].items()
+            if product_id in watched_ids
+            and (result := watched_price_stat(product_id, stats)) is not None
+        }
+        sailing = catalog_copy.get("sailing", {})
+        return {
+            "sailing": {
+                "ship": sailing.get("ship", options_copy["ship"]),
+                "sail_date": sailing.get("sail_date", options_copy["sail_date"]),
+                "currency": sailing.get("currency", options_copy["currency"]),
+            },
+            "scope": scope,
+            "since": since_at.isoformat() if since_at is not None else None,
+            "limit": limit,
+            "latest_only": latest_only,
+            "total": len(matching),
+            "truncated": len(matching) > limit,
+            "changes": changes,
+            "watched_latest": watched_latest,
+            "watched_price_stats": watched_price_stats,
+        }
 
     def purge_history(self) -> None:
         current_date = datetime.now(timezone.utc).date()
@@ -1566,6 +1846,13 @@ class CatalogManager:
                 lines.append("  []")
             return "\n".join(lines) + "\n"
 
+    def _refresh_schedule(self, runtime: CruiseRuntime) -> tuple[str, int]:
+        watches = runtime.preferences.get("watching", {})
+        watched = isinstance(watches, dict) and bool(watches)
+        mode = "watched" if watched else "unwatched"
+        option_name = f"{mode}_refresh_interval_hours"
+        return mode, int(self.app_options[option_name])
+
     def is_refresh_due(self, cruise_id: str | None = None) -> bool:
         with self.lock:
             runtime = self._runtime(cruise_id)
@@ -1581,7 +1868,8 @@ class CatalogManager:
             except (TypeError, ValueError):
                 return True
             age_seconds = (datetime.now(timezone.utc) - generated_at).total_seconds()
-            return age_seconds >= runtime.config["refresh_interval_hours"] * 3600
+            _mode, interval_hours = self._refresh_schedule(runtime)
+            return age_seconds >= interval_hours * 3600
 
     def due_cruise_ids(self) -> list[str]:
         with self.lock:
@@ -1911,6 +2199,40 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         "ship": ship,
                         "sailings": self.manager.discover_sailings(ship),
                     }
+                )
+            except DashboardError as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        scoped_changes_match = re.fullmatch(
+            r"/api/cruises/([^/]+)/changes",
+            route,
+        )
+        if scoped_changes_match:
+            cruise_id = urllib.parse.unquote(scoped_changes_match.group(1))
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            try:
+                scope = query.get("scope", ["watched"])[0]
+                since = query.get("since", [None])[0]
+                raw_limit = query.get("limit", ["100"])[0]
+                raw_latest_only = query.get("latest_only", ["false"])[0].lower()
+                if raw_latest_only not in {"true", "false"}:
+                    raise DashboardError(
+                        "Changes latest_only must be true or false."
+                    )
+                try:
+                    limit = int(raw_limit)
+                except (TypeError, ValueError) as error:
+                    raise DashboardError(
+                        "Changes limit must be a whole number."
+                    ) from error
+                self._send_json(
+                    self.manager.changes_for(
+                        cruise_id,
+                        scope=scope,
+                        since=since,
+                        limit=limit,
+                        latest_only=raw_latest_only == "true",
+                    )
                 )
             except DashboardError as error:
                 self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)

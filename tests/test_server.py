@@ -83,6 +83,58 @@ class ParserTests(unittest.TestCase):
         self.assertIn(f"styles.css?v={version}", index)
         self.assertIn(f"app.js?v={version}", index)
 
+    def test_change_cards_keep_history_in_dialog_and_offer_actions(self):
+        repository_root = Path(__file__).resolve().parents[1]
+        app_js = (repository_root / "static" / "app.js").read_text(
+            encoding="utf-8"
+        )
+        history_start = app_js.index("async function openHistoryFromChange")
+        history_end = app_js.index("\nfunction createChangeRow", history_start)
+        history_source = app_js[history_start:history_end]
+
+        self.assertIn("await loadHistory(itemId);", history_source)
+        self.assertIn("openExpandedHistory(history);", history_source)
+        self.assertNotIn("setActiveTab(", history_source)
+        self.assertIn("actions.append(watchButton, pinButton, history);", app_js)
+        self.assertIn('watch ? "Unwatch" : "＋ Watch"', app_js)
+        self.assertIn('isPinned ? "★ Unpin" : "☆ Pin"', app_js)
+
+    def test_changes_view_has_bounded_visit_and_all_changed_items_modes(self):
+        repository_root = Path(__file__).resolve().parents[1]
+        app_js = (repository_root / "static" / "app.js").read_text(
+            encoding="utf-8"
+        )
+        index = (repository_root / "static" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        styles = (repository_root / "static" / "styles.css").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('changeScope: "all"', app_js)
+        self.assertIn('changePeriod: "since"', app_js)
+        self.assertNotIn('model.changeScope = "watched";', app_js)
+        self.assertIn('model.changeScope = "all";', app_js)
+        self.assertIn('model.changePeriod = "since";', app_js)
+        self.assertIn("function boundedChangeSince", app_js)
+        self.assertIn(
+            "startOfYesterday.setDate(startOfYesterday.getDate() - 1);",
+            app_js,
+        )
+        self.assertIn('query.set("latest_only", "true");', app_js)
+        self.assertIn(
+            '`Changed ${formatTimestamp(change.observed_at)}`',
+            app_js,
+        )
+        self.assertIn('data-change-period="since"', index)
+        self.assertIn('data-change-period="all"', index)
+        self.assertIn("All changed items", index)
+        self.assertIn(
+            "grid-template-columns: repeat(4, minmax(0, 1fr));",
+            styles,
+        )
+        self.assertIn("min-height: 44px;", styles)
+
     def test_iso_date_is_translated_only_at_browser_boundary(self):
         self.assertEqual(server.browser_date_argument("2031-06-20"), "06/20/31")
 
@@ -166,6 +218,48 @@ __ROYAL_PRICE_DASHBOARD_DESCRIPTION__ {"id":"UNKNOWN","description":"No match"}
         self.assertEqual(sailings[0]["duration"], 4)
         self.assertEqual(sailings[1]["sail_date"], "2027-02-21")
         self.assertEqual(sailings[1]["duration"], 7)
+
+
+class OptionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.options_file = Path(self.temp.name) / "options.json"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_adaptive_refresh_defaults_are_loaded(self):
+        options = server.load_options(self.options_file)
+
+        self.assertEqual(options["watched_refresh_interval_hours"], 12)
+        self.assertEqual(options["unwatched_refresh_interval_hours"], 24)
+
+    def test_adaptive_refresh_intervals_can_be_overridden(self):
+        self.options_file.write_text(
+            json.dumps(
+                {
+                    "watched_refresh_interval_hours": 8,
+                    "unwatched_refresh_interval_hours": 36,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        options = server.load_options(self.options_file)
+
+        self.assertEqual(options["watched_refresh_interval_hours"], 8)
+        self.assertEqual(options["unwatched_refresh_interval_hours"], 36)
+
+    def test_legacy_refresh_interval_remains_an_unwatched_fallback(self):
+        self.options_file.write_text(
+            json.dumps({"refresh_interval_hours": 72}),
+            encoding="utf-8",
+        )
+
+        options = server.load_options(self.options_file)
+
+        self.assertEqual(options["watched_refresh_interval_hours"], 12)
+        self.assertEqual(options["unwatched_refresh_interval_hours"], 72)
 
 
 class UpstreamAdapterTests(unittest.TestCase):
@@ -392,7 +486,8 @@ class MultiCruiseTests(unittest.TestCase):
         self.options_file.write_text(
             json.dumps(
                 {
-                    "refresh_interval_hours": 24,
+                    "watched_refresh_interval_hours": 12,
+                    "unwatched_refresh_interval_hours": 24,
                     "notifications_enabled": False,
                 }
             ),
@@ -417,7 +512,6 @@ class MultiCruiseTests(unittest.TestCase):
                 "duration": 7,
                 "description": description,
                 "currency": "USD",
-                "refresh_interval_hours": 24,
                 "notifications_enabled": False,
             }
         )
@@ -582,7 +676,7 @@ class MultiCruiseTests(unittest.TestCase):
     def test_cruise_rejection_log_context_is_bounded_and_allowlisted(self):
         context = server.cruise_request_log_context(
             {
-                "client_version": "0.4.1",
+                "client_version": server.APP_VERSION,
                 "cruise_line": ["unexpected"],
                 "ship_id": "freedom",
                 "ship": "F" * 200,
@@ -634,7 +728,7 @@ class MultiCruiseTests(unittest.TestCase):
                 f"http://127.0.0.1:{httpd.server_port}/api/cruises",
                 data=json.dumps(
                     {
-                        "client_version": "0.4.1",
+                        "client_version": server.APP_VERSION,
                         "cruise_line": "stale-client-value",
                         "ship_id": "freedom",
                         "ship": "Stale client ship name",
@@ -664,7 +758,10 @@ class MultiCruiseTests(unittest.TestCase):
         created = manager._runtime(payload["created"]).config
         self.assertEqual(created["cruise_line"], "royal-caribbean")
         self.assertEqual(created["ship"], "Freedom of the Seas")
-        self.assertEqual(health, {"status": "ok", "version": "0.4.1"})
+        self.assertEqual(
+            health,
+            {"status": "ok", "version": server.APP_VERSION},
+        )
 
     def test_http_post_decodes_a_chunked_ingress_request_body(self):
         manager = server.CatalogManager(self.data_root, self.options_file)
@@ -704,7 +801,7 @@ class MultiCruiseTests(unittest.TestCase):
         try:
             encoded = json.dumps(
                 {
-                    "client_version": "0.4.1",
+                    "client_version": server.APP_VERSION,
                     "cruise_line": "stale-client-value",
                     "ship_id": "freedom",
                     "ship": "Stale client ship name",
@@ -903,6 +1000,127 @@ class MultiCruiseTests(unittest.TestCase):
         self.assertFalse(manager.state()["status"]["completed"])
         self.assertTrue(manager.is_refresh_due(cruise_id))
         self.assertIn(cruise_id, manager.due_cruise_ids())
+
+    def test_explicit_watches_select_the_faster_refresh_schedule(self):
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        cruise_id = self.add_cruise(
+            manager,
+            ship="Wonder of the Seas",
+            sail_date=self.first_date,
+            description="7 Night Bahamas Cruise",
+        )
+        runtime = manager._runtime(cruise_id)
+        runtime.catalog = self.catalog_for("Wonder of the Seas", self.first_date)
+        runtime.catalog["generated_at"] = (
+            datetime.now(timezone.utc) - timedelta(hours=13)
+        ).isoformat()
+
+        manager.set_pinned("3222", True, cruise_id)
+        unwatched_state = manager.state()
+        self.assertEqual(unwatched_state["status"]["refresh_mode"], "unwatched")
+        self.assertEqual(unwatched_state["status"]["refresh_interval_hours"], 24)
+        self.assertFalse(manager.is_refresh_due(cruise_id))
+
+        manager.set_watching("3222", True, cruise_id=cruise_id)
+        watched_state = manager.state()
+        self.assertEqual(watched_state["status"]["refresh_mode"], "watched")
+        self.assertEqual(watched_state["status"]["refresh_interval_hours"], 12)
+        self.assertTrue(manager.is_refresh_due(cruise_id))
+
+        manager.set_watching("3222", False, cruise_id=cruise_id)
+        self.assertEqual(manager.state()["status"]["refresh_mode"], "unwatched")
+        self.assertFalse(manager.is_refresh_due(cruise_id))
+
+    def test_recent_changes_can_be_scoped_to_watched_products(self):
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        cruise_id = self.add_cruise(
+            manager,
+            ship="Wonder of the Seas",
+            sail_date=self.first_date,
+            description="7 Night Bahamas Cruise",
+        )
+        runtime = manager._runtime(cruise_id)
+        baseline = self.catalog_for("Wonder of the Seas", self.first_date)
+        baseline["generated_at"] = "2026-08-27T03:44:55+00:00"
+        runtime.catalog = baseline
+        self.assertEqual(manager._record_history(cruise_id), 3)
+
+        changed = copy.deepcopy(baseline)
+        changed["generated_at"] = "2026-08-28T03:44:55+00:00"
+        next(item for item in changed["items"] if item["id"] == "3222")[
+            "price"
+        ] = 79.99
+        next(item for item in changed["items"] if item["id"] == "ZH01")[
+            "price"
+        ] = 55.99
+        runtime.catalog = changed
+        self.assertEqual(manager._record_history(cruise_id), 2)
+        manager.set_watching("3222", True, cruise_id=cruise_id)
+
+        watched = manager.changes_for(cruise_id, scope="watched")
+        all_changes = manager.changes_for(cruise_id, scope="all")
+
+        self.assertEqual([change["product_id"] for change in watched["changes"]], ["3222"])
+        self.assertEqual(
+            {change["product_id"] for change in all_changes["changes"]},
+            {"3222", "ZH01"},
+        )
+        self.assertEqual(watched["watched_latest"]["3222"]["price_delta"], -16.0)
+        price_stats = watched["watched_price_stats"]["3222"]
+        self.assertEqual(price_stats["recorded_price_count"], 2)
+        self.assertEqual(price_stats["average_price"], 87.99)
+        self.assertEqual(price_stats["current_price"], 79.99)
+        self.assertTrue(price_stats["below_average"])
+        self.assertTrue(price_stats["record_low"])
+        self.assertEqual(watched["total"], 1)
+        self.assertFalse(watched["truncated"])
+
+        caught_up = manager.changes_for(
+            cruise_id,
+            scope="watched",
+            since="2026-08-28T03:44:55+00:00",
+        )
+        self.assertEqual(caught_up["changes"], [])
+        self.assertEqual(caught_up["total"], 0)
+        self.assertEqual(
+            caught_up["watched_latest"]["3222"]["price_delta"],
+            -16.0,
+        )
+        with self.assertRaisesRegex(server.DashboardError, "timezone"):
+            manager.changes_for(
+                cruise_id,
+                scope="watched",
+                since="2026-08-28T03:44:55",
+            )
+
+        rebound = copy.deepcopy(changed)
+        rebound["generated_at"] = "2026-08-29T03:44:55+00:00"
+        next(item for item in rebound["items"] if item["id"] == "3222")[
+            "price"
+        ] = 84.99
+        runtime.catalog = rebound
+        self.assertEqual(manager._record_history(cruise_id), 1)
+        rebound_stats = manager.changes_for(
+            cruise_id,
+            scope="watched",
+        )["watched_price_stats"]["3222"]
+        self.assertEqual(rebound_stats["average_price"], 86.99)
+        self.assertTrue(rebound_stats["below_average"])
+        self.assertFalse(rebound_stats["record_low"])
+
+        latest_items = manager.changes_for(
+            cruise_id,
+            scope="all",
+            latest_only=True,
+            limit=500,
+        )
+        self.assertTrue(latest_items["latest_only"])
+        self.assertEqual(
+            [change["product_id"] for change in latest_items["changes"]],
+            ["3222", "ZH01"],
+        )
+        self.assertEqual(latest_items["changes"][0]["price"], 84.99)
+        self.assertEqual(latest_items["total"], 2)
 
     def test_refresh_cooldown_blocks_manual_and_scheduled_retries(self):
         manager = server.CatalogManager(self.data_root, self.options_file)
@@ -1157,6 +1375,25 @@ class HistoryStoreTests(unittest.TestCase):
         self.assertEqual(history["summary"]["lowest_price"], 79.99)
         self.assertEqual(history["summary"]["highest_price"], 95.99)
         self.assertIsNone(history["summary"]["current_price"])
+
+        changes = self.store.get_changes(catalog=unavailable, options=self.options)
+        self.assertEqual(len(changes["changes"]), 2)
+        self.assertEqual(changes["changes"][0]["price"], None)
+        self.assertFalse(changes["changes"][0]["available"])
+        self.assertEqual(changes["changes"][1]["price_delta"], -16.0)
+        self.assertEqual(
+            changes["latest_price_changes"]["3222"]["observed_at"],
+            "2026-08-28T03:44:55+00:00",
+        )
+        self.assertEqual(
+            changes["price_stats"]["3222"],
+            {
+                "recorded_price_count": 2,
+                "average_price": 87.99,
+                "lowest_price": 79.99,
+                "highest_price": 95.99,
+            },
+        )
 
     def test_histories_are_isolated_by_sailing(self):
         self.store.record_catalog(self.catalog, self.options)

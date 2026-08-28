@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <title>Royal Prices</title>
-    <link rel="stylesheet" href="./styles.css?v=0.4.1">
+    <link rel="stylesheet" href="./styles.css?v=0.5.2">
   </head>
   <body>
     <main class="shell">
@@ -79,7 +79,7 @@
             Pinning makes a shortlist, and pinned items stay in <b>All</b>. Prices
             only create notifications after you press <b>Watch</b> for that item.
             Price and availability changes are recorded for every catalog item and
-            load only when you open its <b>History</b> panel.
+            appear in <b>Changes</b> or an item's <b>History</b> panel.
           </div>
           <button
             id="dismiss-alert-tips"
@@ -123,9 +123,45 @@
             <button class="tab active" data-tab="all" type="button">All</button>
             <button class="tab" data-tab="pinned" type="button">Pinned</button>
             <button class="tab" data-tab="watching" type="button">Watching</button>
+            <button class="tab" data-tab="changes" type="button">Changes</button>
           </nav>
 
-          <div class="filters">
+          <section
+            id="changes-controls"
+            class="changes-controls hidden"
+            aria-label="Changes options"
+          >
+            <div>
+              <strong id="changes-heading">Changes since last visit</strong>
+              <p id="changes-period"></p>
+            </div>
+            <div class="change-options">
+              <div class="change-option">
+                <span class="change-option-label">When</span>
+                <div class="change-scope" role="group" aria-label="Change period">
+                  <button class="scope-button active" data-change-period="since" type="button">
+                    Since last visit
+                  </button>
+                  <button class="scope-button" data-change-period="all" type="button">
+                    All changed items
+                  </button>
+                </div>
+              </div>
+              <div class="change-option">
+                <span class="change-option-label">Products</span>
+                <div class="change-scope" role="group" aria-label="Products included">
+                  <button class="scope-button" data-change-scope="watched" type="button">
+                    Watched
+                  </button>
+                  <button class="scope-button active" data-change-scope="all" type="button">
+                    All items
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div id="catalog-filters" class="filters">
             <label class="field search-field">
               <span>Search</span>
               <input id="search-input" type="search" placeholder="Drink package, CocoCay, massage…">
@@ -158,7 +194,22 @@
       </div>
     </main>
 
+    <dialog id="history-chart-dialog" class="history-chart-dialog">
+      <section class="history-chart-dialog-card" aria-labelledby="history-chart-dialog-title">
+        <header class="history-chart-dialog-header">
+          <div>
+            <span class="eyebrow">Price history</span>
+            <h2 id="history-chart-dialog-title">Expanded price history</h2>
+          </div>
+          <button id="history-chart-dialog-close" class="button quiet" type="button">
+            Close
+          </button>
+        </header>
+        <div id="history-chart-dialog-body" class="history-chart-dialog-body"></div>
+      </section>
+    </dialog>
+
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-    <script src="./app.js?v=0.4.1" defer></script>
+    <script src="./app.js?v=0.5.2" defer></script>
   </body>
 </html>

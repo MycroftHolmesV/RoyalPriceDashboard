@@ -6,7 +6,7 @@ The dashboard appears as **Royal Prices** in the Home Assistant sidebar.
 
 - A clean installation opens with **Add cruise**. Choose Royal Caribbean or
   Celebrity, search the discovered ship list, select a real future sailing, and
-  confirm currency and refresh behavior.
+  confirm currency and notification behavior.
 - Use the **Viewing cruise** menu to switch cruises. Each cruise has its own
   catalog, pins, watches, and settings.
 - **Add cruise** starts the same guided flow for another sailing and creates its
@@ -39,14 +39,35 @@ The dashboard appears as **Royal Prices** in the Home Assistant sidebar.
   open.
 - **History** opens an on-demand chart for that item. The App records an initial
   baseline and then only price or availability changes for every catalog item,
-  including pinned and unwatched items.
+  including pinned and unwatched items. Select the compact chart to open a
+  larger version with more readable price labels. On a narrow screen, scroll
+  sideways within the expanded chart to see the full timeline.
+- **Changes** defaults to all products and shows recorded price and availability
+  changes since this browser last opened that cruise. The lookback cannot be
+  newer than the start of yesterday in the browser's local time. Choose
+  **Watched** to narrow the products, or **All changed items** to show each
+  product with recorded changes once using its latest change and date. On the
+  first visit, when no prior browser timestamp exists, the latest recorded
+  changes are shown.
+- A watched product card shows the date, amount, and resulting price of its
+  latest actual price change. The initial history baseline is not presented as
+  a price change.
+- A watched product with at least two saved available prices shows **Record
+  low** when its current price matches the lowest saved price and an earlier
+  saved price was higher. Otherwise it shows **Below average** when the current
+  price is below the arithmetic mean of its saved available price points. Hover
+  for the current price, average, and sample count; assistive technology gets
+  the same explanation. Unchanged refreshes are not duplicated, so the mean is
+  not time-weighted.
 - **Show description** expands Royal's public product description when the feed
   supplies one. Descriptions stay collapsed by default and are included in
   search results.
 - **Export watches** copies a `watchList` YAML block suitable for the separate
   Royal Caribbean Price Check App once the reservation appears in the account.
 - **Refresh prices** starts a background catalog refresh. Automatic refreshes
-  run at the configured interval until the cruise's return date.
+  run until the cruise's return date. A cruise with at least one explicit watch
+  refreshes every 12 hours by default; a cruise with no watches refreshes every
+  24 hours. Pins do not affect the schedule.
 - After any refresh starts, that cruise waits at least 10 minutes before another
   manual or scheduled attempt. A failed upstream request uses exponential retry
   delays beginning at 15 minutes and capped at six hours, so an outage cannot
@@ -55,6 +76,23 @@ The dashboard appears as **Royal Prices** in the Home Assistant sidebar.
 Prices are public Cruise Planner prices and may differ from logged-in,
 passenger-specific offers. The source browser may not return prices for every
 multi-device or larger-size variant.
+
+## Refresh configuration
+
+To override the adaptive defaults, edit the Home Assistant App configuration
+YAML and restart the App:
+
+```yaml
+watched_refresh_interval_hours: 12
+unwatched_refresh_interval_hours: 24
+```
+
+Both values are optional and, when present, must be whole hours from 1 through
+168. Omitting them uses the 12-hour and 24-hour defaults. The dashboard has no
+per-cruise cadence control. Adding the first watch selects the watched cadence;
+removing the last watch returns that cruise to the unwatched cadence. The
+optional legacy `refresh_interval_hours` key is accepted only as an unwatched
+fallback for upgrade compatibility.
 
 History is separated by ship, ISO sailing date, and currency. It is retained
 until 30 days after the sailing date, then removed automatically. Existing
