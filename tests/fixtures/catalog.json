@@ -1,0 +1,36 @@
+{
+  "generated_at": "2026-08-26T16:30:00+00:00",
+  "source": {
+    "name": "BrowseRoyalCaribbeanPrice.py",
+    "commit": "bf5212c26576d468a6af2043565ece2d01f8b503",
+    "pricing": "public"
+  },
+  "sailing": {
+    "ship": "Example of the Seas",
+    "sail_date": "2031-06-20",
+    "currency": "USD",
+    "description": "Example of the Seas sailing on 06/20/31 (4 Night Demo Cruise)",
+    "itinerary": [
+      "Day 1 (06/20/31): Sample Port",
+      "Day 2 (06/21/31): Cruising",
+      "Day 3 (06/22/31): Example Island",
+      "Day 4 (06/23/31): Cruising"
+    ]
+  },
+  "items": [
+    {"id":"0814","name":"Classic Soda Package","category":"Beverage Packages","subcategory":null,"prefix":"beverage","product":"0814","price":13.99,"currency":"USD","unit":"night","price_available":true},
+    {"id":"3222","name":"Deluxe Beverage Package","category":"Beverage Packages","subcategory":null,"prefix":"beverage","product":"3222","price":95.99,"currency":"USD","unit":"day","price_available":true},
+    {"id":"0812","name":"Refreshment Package","category":"Beverage Packages","subcategory":null,"prefix":"beverage","product":"0812","price":32.99,"currency":"USD","unit":"night","price_available":true},
+    {"id":"WN_CHOPDINNER","name":"Chops Grille","category":"Dining","subcategory":null,"prefix":"dining","product":"WN_CHOPDINNER","price":51.99,"currency":"USD","unit":null,"price_available":true},
+    {"id":"Y7OE","name":"Unlimited Dining Package","category":"Dining","subcategory":null,"prefix":"dining","product":"Y7OE","price":44.99,"currency":"USD","unit":"night","price_available":true},
+    {"id":"33K7","name":"The Key","category":"Internet","subcategory":null,"prefix":"internet","product":"33K7","price":34.99,"currency":"USD","unit":"day","price_available":true},
+    {"id":"33S1","name":"VOOM High Speed Internet Package","category":"Internet","subcategory":null,"prefix":"internet","product":"33S1","price":22.99,"currency":"USD","unit":"night","price_available":true},
+    {"id":"33S2","name":"VOOM High Speed Internet Package - 2 Devices","category":"Internet","subcategory":null,"prefix":"internet","product":"33S2","price":null,"currency":"USD","unit":null,"price_available":false},
+    {"id":"Y6Y2","name":"Hideaway Beach (Adults-Only) - Day Pass","category":"Shore Excursions","subcategory":"Day 4: Perfect Day Cococay, Bahamas","prefix":"shorex","product":"Y6Y2","price":42.99,"currency":"USD","unit":null,"price_available":true},
+    {"id":"ZH04","name":"Coco Beach Club - Day Pass","category":"Shore Excursions","subcategory":"Day 4: Perfect Day Cococay, Bahamas","prefix":"shorex","product":"ZH04","price":108.99,"currency":"USD","unit":null,"price_available":true},
+    {"id":"ZH01","name":"Thrill Waterpark - Full Day Pass","category":"Shore Excursions","subcategory":"Day 4: Perfect Day Cococay, Bahamas","prefix":"shorex","product":"ZH01","price":61.99,"currency":"USD","unit":null,"price_available":true},
+    {"id":"Y92Y","name":"Royal Beach Club - Open Bar Day Pass (Unlimited Open Bar & Dining)","category":"Shore Excursions","subcategory":"Day 3: Nassau, Bahamas","prefix":"shorex","product":"Y92Y","price":159.99,"currency":"USD","unit":null,"price_available":true},
+    {"id":"1002479","name":"Swedish Massage - 50 minutes","category":"Spa and Wellness","subcategory":null,"prefix":"spa","product":"1002479","price":125.00,"currency":"USD","unit":null,"price_available":true},
+    {"id":"33PL","name":"Photo Package: 10 Photos","category":"Photo","subcategory":null,"prefix":"photoPackage","product":"33PL","price":103.99,"currency":"USD","unit":null,"price_available":true}
+  ]
+}

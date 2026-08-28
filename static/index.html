@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Royal Prices</title>
+    <link rel="stylesheet" href="./styles.css?v=0.4.0">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Royal Caribbean &amp; Celebrity public prices</p>
+          <h1>Royal Prices</h1>
+          <p id="sailing-summary" class="sailing-summary">Loading sailing…</p>
+        </div>
+        <div class="hero-side">
+          <label id="cruise-picker" class="cruise-picker hidden">
+            <span>Viewing cruise</span>
+            <select id="cruise-select" aria-label="Viewing cruise"></select>
+          </label>
+          <div class="hero-actions">
+            <button id="add-cruise-button" class="button secondary" type="button">
+              ＋ Add cruise
+            </button>
+            <button id="remove-cruise-button" class="button danger hidden" type="button">
+              Remove cruise
+            </button>
+            <button id="export-button" class="button secondary" type="button">
+              Export watches
+            </button>
+            <button id="refresh-button" class="button primary" type="button">
+              Refresh prices
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <section id="setup-panel" class="setup-panel hidden" aria-labelledby="setup-title">
+        <div class="setup-heading">
+          <div>
+            <p class="eyebrow setup-eyebrow">Cruise setup</p>
+            <h2 id="setup-title">Add a cruise</h2>
+            <p id="setup-intro">Choose an actual sailing, then we’ll build its first price baseline.</p>
+          </div>
+          <button id="setup-cancel" class="button quiet hidden" type="button">Cancel</button>
+        </div>
+        <ol id="setup-progress" class="setup-progress" aria-label="Cruise setup progress">
+          <li data-setup-progress="line">Cruise line</li>
+          <li data-setup-progress="ship">Ship</li>
+          <li data-setup-progress="sailing">Sailing</li>
+          <li data-setup-progress="settings">Confirm</li>
+        </ol>
+        <div id="setup-error" class="banner error hidden" role="alert"></div>
+        <div id="setup-body" class="setup-body"></div>
+      </section>
+
+      <div id="dashboard">
+        <section
+          id="completed-cruise-notice"
+          class="completion-notice hidden"
+          aria-labelledby="completed-cruise-title"
+        >
+          <span class="completion-icon" aria-hidden="true">⚓</span>
+          <div class="completion-copy">
+            <strong id="completed-cruise-title">This cruise has returned.</strong>
+            <p id="completed-cruise-copy"></p>
+          </div>
+          <button id="completed-remove-button" class="button danger" type="button">
+            Remove completed cruise
+          </button>
+        </section>
+
+        <section id="alert-tips" class="notice" aria-label="How alerts work">
+          <span class="notice-icon" aria-hidden="true">🔔</span>
+          <div class="notice-copy">
+            <strong>Browsing is silent.</strong>
+            Pinning makes a shortlist, and pinned items stay in <b>All</b>. Prices
+            only create notifications after you press <b>Watch</b> for that item.
+            Price and availability changes are recorded for every catalog item and
+            load only when you open its <b>History</b> panel.
+          </div>
+          <button
+            id="dismiss-alert-tips"
+            class="notice-dismiss"
+            type="button"
+            aria-label="Dismiss alert tips"
+            title="Dismiss alert tips"
+          >×</button>
+        </section>
+        <button
+          id="show-alert-tips"
+          class="tips-toggle hidden"
+          type="button"
+          aria-controls="alert-tips"
+        >ⓘ Show alert tips</button>
+
+        <section class="status-strip" aria-live="polite">
+          <div>
+            <span class="status-label">Last refresh</span>
+            <strong id="last-refresh">Never</strong>
+          </div>
+          <div>
+            <span class="status-label">Catalog</span>
+            <strong id="catalog-count">0 items</strong>
+          </div>
+          <div>
+            <span class="status-label">Watching</span>
+            <strong id="watch-count">0 items</strong>
+          </div>
+          <div>
+            <span class="status-label">Pinned</span>
+            <strong id="pinned-count">0 items</strong>
+          </div>
+        </section>
+
+        <section id="error-banner" class="banner error hidden" role="alert"></section>
+        <section id="warning-banner" class="banner warning hidden"></section>
+
+        <section class="catalog-panel">
+          <nav class="tabs" aria-label="Catalog views">
+            <button class="tab active" data-tab="all" type="button">All</button>
+            <button class="tab" data-tab="pinned" type="button">Pinned</button>
+            <button class="tab" data-tab="watching" type="button">Watching</button>
+          </nav>
+
+          <div class="filters">
+            <label class="field search-field">
+              <span>Search</span>
+              <input id="search-input" type="search" placeholder="Drink package, CocoCay, massage…">
+            </label>
+            <label class="field">
+              <span>Category</span>
+              <select id="category-select">
+                <option value="">All categories</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Sort</span>
+              <select id="sort-select">
+                <option value="category">Category</option>
+                <option value="name">Name</option>
+                <option value="price-asc">Price: low to high</option>
+                <option value="price-desc">Price: high to low</option>
+              </select>
+            </label>
+          </div>
+
+          <div id="results-summary" class="results-summary"></div>
+          <div id="catalog" class="catalog" aria-live="polite"></div>
+          <div id="empty-state" class="empty hidden">
+            <div class="empty-icon" aria-hidden="true">🛳️</div>
+            <h2 id="empty-title">Nothing on this deck</h2>
+            <p id="empty-copy">Try another search, category, or catalog tab.</p>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+    <script src="./app.js?v=0.4.0" defer></script>
+  </body>
+</html>

@@ -1,0 +1,29 @@
+name: Royal Price Dashboard
+version: "0.4.0"
+slug: royal_price_dashboard
+description: Browse current and historical Royal Caribbean and Celebrity prices across multiple cruises.
+url: https://github.com/MycroftHolmesV/RoyalPriceDashboard
+arch:
+  - amd64
+startup: application
+boot: auto
+init: false
+ingress: true
+ingress_port: 8099
+ingress_stream: true
+panel_icon: mdi:ship-wheel
+panel_title: Royal Prices
+panel_admin: false
+homeassistant_api: true
+watchdog: http://[HOST]:[PORT:8099]/health
+backup: hot
+stage: experimental
+options:
+  refresh_interval_hours: 24
+  notifications_enabled: true
+schema:
+  ship: str?
+  sail_date: "match(^\\d{4}-\\d{2}-\\d{2}$)?"
+  currency: "match(^[A-Za-z]{3}$)?"
+  refresh_interval_hours: "int(1,168)"
+  notifications_enabled: bool
