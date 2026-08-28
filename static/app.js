@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.4.0";
+const APP_VERSION = "0.4.1";
 const ALERT_TIPS_STORAGE_KEY = "royal-price-dashboard.alert-tips-dismissed";
 
 const model = {

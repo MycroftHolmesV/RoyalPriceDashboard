@@ -40,6 +40,9 @@ The dashboard appears as **Royal Prices** in the Home Assistant sidebar.
 - **History** opens an on-demand chart for that item. The App records an initial
   baseline and then only price or availability changes for every catalog item,
   including pinned and unwatched items.
+- **Show description** expands Royal's public product description when the feed
+  supplies one. Descriptions stay collapsed by default and are included in
+  search results.
 - **Export watches** copies a `watchList` YAML block suitable for the separate
   Royal Caribbean Price Check App once the reservation appears in the account.
 - **Refresh prices** starts a background catalog refresh. Automatic refreshes

@@ -24,6 +24,8 @@ Gathering list of products.  This may take a few minutes; please be patient.
 \x1b[94mBeverage Packages\x1b[0m
 \tDeluxe Beverage Package \x1b[1;32m95.99 USD\x1b[0m per day (prefix: beverage, product: 3222)
 \tEvian Water Delivery (12 or 24 Bottles) (larger option) Price Not Available (prefix: beverage, product: 0904)
+__ROYAL_PRICE_DASHBOARD_DESCRIPTION__ {"id":"3222","description":"<p>Drinks throughout the cruise, subject to the package terms.</p>"}
+__ROYAL_PRICE_DASHBOARD_DESCRIPTION__ {"id":"0904","description":"<p>Drinks throughout the cruise, subject to the package terms.</p>"}
 \x1b[94mShore Excursions\x1b[0m
 \t\x1b[94mDay 4: Perfect Day Cococay, Bahamas\x1b[0m
 \tThrill Waterpark - Full Day Pass  \x1b[1;32m61.99 USD\x1b[0m (prefix: shorex, product: ZH01)
@@ -108,7 +110,14 @@ class ParserTests(unittest.TestCase):
             by_id["ZH01"]["description"],
             "A fast ride - bring a towel & sunscreen.",
         )
-        self.assertIsNone(by_id["3222"]["description"])
+        self.assertEqual(
+            by_id["3222"]["description"],
+            "Drinks throughout the cruise, subject to the package terms.",
+        )
+        self.assertEqual(
+            by_id["0904"]["description"],
+            by_id["3222"]["description"],
+        )
         self.assertEqual(len(parsed["sailing"]["itinerary"]), 2)
 
     def test_invalid_and_unknown_description_markers_are_ignored(self):
@@ -179,7 +188,7 @@ class UpstreamAdapterTests(unittest.TestCase):
             "query": self.PRODUCT_QUERY,
         }
 
-    def test_description_is_requested_only_for_shore_excursions(self):
+    def test_description_is_requested_for_every_product_category(self):
         self.assertEqual(
             upstream_adapter.DESCRIPTION_MARKER,
             server.PRODUCT_DESCRIPTION_MARKER,
@@ -191,9 +200,20 @@ class UpstreamAdapterTests(unittest.TestCase):
         self.assertIn("title description", updated["query"])
         self.assertNotIn("title description", original["query"])
         beverage = self.payload("beverage")
+        updated_beverage = upstream_adapter.add_description_to_product_query(
+            beverage
+        )
+        self.assertIsNot(updated_beverage, beverage)
+        self.assertIn("title description", updated_beverage["query"])
+
+        unrelated = {
+            "operationName": "WebCategories",
+            "variables": {},
+            "query": self.PRODUCT_QUERY,
+        }
         self.assertIs(
-            upstream_adapter.add_description_to_product_query(beverage),
-            beverage,
+            upstream_adapter.add_description_to_product_query(unrelated),
+            unrelated,
         )
 
     def test_extensions_preserve_output_and_emit_machine_readable_markers(self):
@@ -223,7 +243,14 @@ class UpstreamAdapterTests(unittest.TestCase):
         self.assertIn("title description", requests[0][1]["json_data"]["query"])
 
         products = [
-            {"id": "ZH01", "description": "A sample description."},
+            {
+                "id": "ZH01",
+                "description": "A sample description.",
+                "variantOptions": [
+                    {"code": "ZH01", "name": "Default"},
+                    {"code": "ZH02", "name": "Larger option"},
+                ],
+            },
             {"id": "BLANK", "description": ""},
         ]
         namespace["print_and_sort_products"](
@@ -235,12 +262,18 @@ class UpstreamAdapterTests(unittest.TestCase):
             True,
         )
         self.assertEqual(len(printed), 1)
-        self.assertEqual(len(logged), 1)
+        self.assertEqual(len(logged), 2)
         self.assertTrue(logged[0].startswith(upstream_adapter.DESCRIPTION_MARKER))
-        marker = json.loads(logged[0].removeprefix(upstream_adapter.DESCRIPTION_MARKER))
+        markers = [
+            json.loads(entry.removeprefix(upstream_adapter.DESCRIPTION_MARKER))
+            for entry in logged
+        ]
         self.assertEqual(
-            marker,
-            {"id": "ZH01", "description": "A sample description."},
+            markers,
+            [
+                {"id": "ZH01", "description": "A sample description."},
+                {"id": "ZH02", "description": "A sample description."},
+            ],
         )
 
         namespace["print_and_sort_products"](
@@ -251,7 +284,8 @@ class UpstreamAdapterTests(unittest.TestCase):
             "beverage",
             True,
         )
-        self.assertEqual(len(logged), 1)
+        self.assertEqual(len(logged), 4)
+        self.assertTrue(logged[2].startswith(upstream_adapter.DESCRIPTION_MARKER))
 
     def test_main_loads_and_extends_a_pinned_module_without_rewriting_it(self):
         fake_source = """
@@ -267,7 +301,7 @@ log = print
 def main(args=None):
     _execute_api_request(json_data={
         "operationName": "WebProductsByCategory",
-        "variables": {"category": "shorex"},
+        "variables": {"category": "beverage"},
         "query": "commerceProducts { id title variantOptions { code } }",
     })
     print_and_sort_products(
@@ -275,7 +309,7 @@ def main(args=None):
         "alpha",
         "asc",
         "USD",
-        "shorex",
+        "beverage",
         True,
     )
 """
@@ -548,7 +582,7 @@ class MultiCruiseTests(unittest.TestCase):
     def test_cruise_rejection_log_context_is_bounded_and_allowlisted(self):
         context = server.cruise_request_log_context(
             {
-                "client_version": "0.4.0",
+                "client_version": "0.4.1",
                 "cruise_line": ["unexpected"],
                 "ship_id": "freedom",
                 "ship": "F" * 200,
@@ -600,7 +634,7 @@ class MultiCruiseTests(unittest.TestCase):
                 f"http://127.0.0.1:{httpd.server_port}/api/cruises",
                 data=json.dumps(
                     {
-                        "client_version": "0.4.0",
+                        "client_version": "0.4.1",
                         "cruise_line": "stale-client-value",
                         "ship_id": "freedom",
                         "ship": "Stale client ship name",
@@ -630,7 +664,7 @@ class MultiCruiseTests(unittest.TestCase):
         created = manager._runtime(payload["created"]).config
         self.assertEqual(created["cruise_line"], "royal-caribbean")
         self.assertEqual(created["ship"], "Freedom of the Seas")
-        self.assertEqual(health, {"status": "ok", "version": "0.4.0"})
+        self.assertEqual(health, {"status": "ok", "version": "0.4.1"})
 
     def test_http_post_decodes_a_chunked_ingress_request_body(self):
         manager = server.CatalogManager(self.data_root, self.options_file)
@@ -670,7 +704,7 @@ class MultiCruiseTests(unittest.TestCase):
         try:
             encoded = json.dumps(
                 {
-                    "client_version": "0.4.0",
+                    "client_version": "0.4.1",
                     "cruise_line": "stale-client-value",
                     "ship_id": "freedom",
                     "ship": "Stale client ship name",

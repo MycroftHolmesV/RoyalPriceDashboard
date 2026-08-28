@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.1 (private release candidate)
+
+- Expand the compact, searchable **Show description** disclosure from shore
+  excursions to every public catalog category.
+- Keep descriptions collapsed by default while preserving the existing plain
+  text normalization, bounded storage, and category-neutral interface.
+- Apply a base product's description to its separately coded variant rows, such
+  as larger bottle deliveries and multi-device internet packages.
+- Verify the common description field against all 15 categories returned for a
+  current Wonder of the Seas public catalog, with no empty values or GraphQL
+  errors in the probe.
+
 ## 0.4.0 (private release candidate)
 
 - Add searchable shore-excursion descriptions from Royal's public catalog

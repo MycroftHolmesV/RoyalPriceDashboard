@@ -16,14 +16,10 @@ DEFAULT_PINNED_SCRIPT = Path("/opt/upstream/BrowseRoyalCaribbeanPrice.py")
 
 
 def add_description_to_product_query(payload: Any) -> Any:
-    """Request descriptions only for the public shore-excursion catalog."""
+    """Request descriptions for every public product catalog category."""
     if not isinstance(payload, dict):
         return payload
     if payload.get("operationName") != "WebProductsByCategory":
-        return payload
-
-    variables = payload.get("variables")
-    if not isinstance(variables, dict) or variables.get("category") != "shorex":
         return payload
 
     query = payload.get("query")
@@ -38,7 +34,7 @@ def add_description_to_product_query(payload: Any) -> Any:
     )
     if replacements != 1:
         raise RuntimeError(
-            "The pinned upstream shore-excursion query has an unexpected shape."
+            "The pinned upstream product query has an unexpected shape."
         )
 
     updated = copy.deepcopy(payload)
@@ -50,7 +46,7 @@ def emit_description_markers(
     products: Any,
     logger: Callable[[str], Any],
 ) -> None:
-    """Emit one compact parser marker for each described base product."""
+    """Emit compact parser markers for described products and their variants."""
     if not isinstance(products, list):
         return
 
@@ -58,22 +54,30 @@ def emit_description_markers(
     for product in products:
         if not isinstance(product, dict):
             continue
-        product_id = str(product.get("id") or "").strip()
         description = product.get("description")
-        if (
-            not product_id
-            or product_id in seen
-            or not isinstance(description, str)
-            or not description.strip()
-        ):
+        if not isinstance(description, str) or not description.strip():
             continue
-        seen.add(product_id)
-        marker = json.dumps(
-            {"id": product_id, "description": description},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        logger(DESCRIPTION_MARKER + marker)
+
+        product_ids = [product.get("id")]
+        variant_options = product.get("variantOptions")
+        if isinstance(variant_options, list):
+            product_ids.extend(
+                option.get("code")
+                for option in variant_options
+                if isinstance(option, dict)
+            )
+
+        for raw_product_id in product_ids:
+            product_id = str(raw_product_id or "").strip()
+            if not product_id or product_id in seen:
+                continue
+            seen.add(product_id)
+            marker = json.dumps(
+                {"id": product_id, "description": description},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            logger(DESCRIPTION_MARKER + marker)
 
 
 def install_extensions(namespace: dict[str, Any]) -> None:
@@ -108,7 +112,7 @@ def install_extensions(namespace: dict[str, Any]) -> None:
             show_watchlist_codes,
         )
         logger = namespace.get("log")
-        if key == "shorex" and show_watchlist_codes and callable(logger):
+        if show_watchlist_codes and callable(logger):
             emit_description_markers(products, logger)
 
     namespace["_execute_api_request"] = request_with_descriptions
