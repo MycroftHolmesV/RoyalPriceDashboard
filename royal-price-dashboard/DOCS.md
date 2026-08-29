@@ -1,6 +1,11 @@
 # Royal Price Dashboard
 
-The dashboard appears as **Royal Prices** in the Home Assistant sidebar.
+Home Assistant does not add a newly installed App to the sidebar automatically.
+Start Royal Price Dashboard from its **Info** tab and select **Open Web UI**.
+For regular access, enable **Show in sidebar** on that same tab; the shortcut
+then appears as **Royal Prices** with a ship-wheel icon. If the shortcut remains
+off, return through **Settings > Apps > Royal Price Dashboard > Open Web UI**.
+The repository cannot change this per-install Home Assistant preference.
 
 ## Cruises
 

@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.6.1";
+const APP_VERSION = "0.6.2";
 const ALERT_TIPS_STORAGE_KEY = "royal-price-dashboard.alert-tips-dismissed";
 const CHANGE_VISIT_STORAGE_PREFIX = "royal-price-dashboard.change-visit.";
 
@@ -1266,6 +1266,21 @@ function renderLineStep() {
     "setup-question",
     "Which fleet is your sailing part of? No cruise-line login is needed.",
   ));
+  if (model.state?.setup_required) {
+    const sidebarTip = node("aside", "setup-sidebar-tip");
+    sidebarTip.setAttribute("aria-label", "Home Assistant sidebar tip");
+    sidebarTip.append(
+      node("strong", "", "Keep Royal Prices handy"),
+      node(
+        "span",
+        "",
+        "Home Assistant leaves Show in sidebar off after installation. "
+          + "From Settings > Apps > Royal Price Dashboard, enable it for a "
+          + "Royal Prices shortcut. You can always return through Open Web UI.",
+      ),
+    );
+    fragment.append(sidebarTip);
+  }
   const choices = node("div", "brand-choices");
   const brands = [
     {

@@ -111,6 +111,9 @@ class ParserTests(unittest.TestCase):
 
         self.assertIn("ingress: true", config)
         self.assertIn("homeassistant_api: true", config)
+        self.assertIn("panel_icon: mdi:ship-wheel", config)
+        self.assertIn("panel_title: Royal Prices", config)
+        self.assertIn("panel_admin: false", config)
         for forbidden in (
             "host_network:",
             "docker_api:",
@@ -140,6 +143,20 @@ class ParserTests(unittest.TestCase):
 
         self.assertNotIn("Installation after public release", root_readme)
         self.assertNotIn("current release status", app_readme)
+
+    def test_sidebar_onboarding_explains_home_assistant_default(self):
+        repository_root = Path(__file__).resolve().parents[2]
+        app_root = repository_root / "royal-price-dashboard"
+        public_copy = [
+            (repository_root / "README.md").read_text(encoding="utf-8"),
+            (app_root / "README.md").read_text(encoding="utf-8"),
+            (app_root / "DOCS.md").read_text(encoding="utf-8"),
+            (app_root / "static" / "app.js").read_text(encoding="utf-8"),
+        ]
+
+        for copy in public_copy:
+            self.assertIn("Show in sidebar", copy)
+            self.assertIn("Open Web UI", copy)
 
     def test_storage_controls_are_present_in_the_dashboard(self):
         app_root = Path(__file__).resolve().parents[1]

@@ -28,7 +28,7 @@ from typing import Any
 
 APP_ROOT = Path(__file__).resolve().parent
 STATIC_ROOT = APP_ROOT / "static"
-APP_VERSION = "0.6.1"
+APP_VERSION = "0.6.2"
 DATA_ROOT = Path(os.environ.get("ROYAL_PRICE_DATA_DIR", "/data"))
 OPTIONS_FILE = Path(
     os.environ.get("ROYAL_PRICE_OPTIONS_FILE", "/data/options.json")

@@ -21,10 +21,17 @@ store, such as Home Assistant OS or Home Assistant Supervised.
    ```
 
 2. Find **Royal Price Dashboard** in the App store and select **Install**.
-3. Start the App, enable **Show in sidebar** if desired, and open **Royal
-   Prices**.
-4. Use **Add cruise** to choose Royal Caribbean or Celebrity, a discovered
+3. On the App's **Info** tab, select **Start**, then select **Open Web UI**.
+4. For regular access, enable **Show in sidebar** on that same tab. Home
+   Assistant leaves this preference off for a new App installation, so the
+   repository cannot enable it for you. The shortcut is named **Royal Prices**.
+5. Use **Add cruise** to choose Royal Caribbean or Celebrity, a discovered
    ship, an actual future sailing, and a currency.
+
+> [!NOTE]
+> If **Show in sidebar** remains off, the App is still installed and running.
+> Return to it through **Settings > Apps > Royal Price Dashboard > Open Web
+> UI**.
 
 The repository provides signed, versioned images for `amd64` and `aarch64`.
 Users do not need HACS, jdeath's Home Assistant repository, the separate Royal

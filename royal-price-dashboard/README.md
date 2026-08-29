@@ -16,6 +16,14 @@ jdeath's Home Assistant repository, the separate personalized price-checker
 App, or a cruise-line account. See the [repository installation
 guide](../README.md) for installation and setup steps.
 
+> [!NOTE]
+> Home Assistant leaves **Show in sidebar** off for a new App installation.
+> After starting the App, select **Open Web UI** on its **Info** tab. Enable
+> **Show in sidebar** there if you want a permanent **Royal Prices** shortcut.
+> If you leave it off, return through **Settings > Apps > Royal Price
+> Dashboard > Open Web UI**. The repository cannot change this Home Assistant
+> preference for you.
+
 On first run, **Add cruise** guides you through Royal Caribbean or Celebrity,
 live public ship discovery, an actual future sailing, currency, and notification
 settings. Additional cruises can be added and switched from

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.2
+
+- Explain that Home Assistant leaves **Show in sidebar** off for a new App
+  installation and show the exact **Open Web UI** fallback path.
+- Add a first-run dashboard tip for enabling the **Royal Prices** sidebar
+  shortcut without requesting Supervisor management access.
+- Keep the sidebar title, ship-wheel icon, and non-admin access intent covered
+  by metadata regression checks.
+
 ## 0.6.1
 
 - Report App-private data use and Home Assistant filesystem free space directly
