@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <title>Royal Prices</title>
-    <link rel="stylesheet" href="./styles.css?v=0.6.0">
+    <link rel="stylesheet" href="./styles.css?v=0.6.1">
   </head>
   <body>
     <main class="shell">
@@ -113,6 +113,11 @@
             <span class="status-label">Pinned</span>
             <strong id="pinned-count">0 items</strong>
           </div>
+          <div id="storage-status" class="storage-status">
+            <span class="status-label">App storage</span>
+            <strong id="storage-usage">Checking…</strong>
+            <small id="storage-free" class="status-detail"></small>
+          </div>
         </section>
 
         <section id="error-banner" class="banner error hidden" role="alert"></section>
@@ -210,6 +215,6 @@
     </dialog>
 
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-    <script src="./app.js?v=0.6.0" defer></script>
+    <script src="./app.js?v=0.6.1" defer></script>
   </body>
 </html>

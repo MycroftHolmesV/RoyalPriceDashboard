@@ -3,6 +3,7 @@ import http.client
 import io
 import json
 import shutil
+import sqlite3
 import tempfile
 import threading
 import time
@@ -94,22 +95,6 @@ class ParserTests(unittest.TestCase):
             "https://github.com/MycroftHolmesV/RoyalPriceDashboard",
             repository_config,
         )
-        workflow = (
-            repository_root / ".github" / "workflows" / "build.yml"
-        ).read_text(encoding="utf-8")
-        self.assertRegex(
-            workflow,
-            r'(?m)^  BUILDX_METADATA_PROVENANCE: "false"$',
-        )
-        self.assertRegex(
-            workflow,
-            r'(?m)^  DOCKER_BUILD_RECORD_UPLOAD: "false"$',
-        )
-        root_readme = (repository_root / "README.md").read_text(encoding="utf-8")
-        self.assertNotIn("have not been published", root_readme)
-        self.assertNotIn("Installation after public release", root_readme)
-        security = (repository_root / "SECURITY.md").read_text(encoding="utf-8")
-        self.assertNotIn("remains a release gate", security)
         self.assertIn(
             f'const APP_VERSION = "{version}";',
             (app_root / "static" / "app.js").read_text(encoding="utf-8"),
@@ -136,6 +121,35 @@ class ParserTests(unittest.TestCase):
             "map:",
         ):
             self.assertNotIn(forbidden, config)
+
+    def test_build_workflow_suppresses_private_build_records(self):
+        repository_root = Path(__file__).resolve().parents[2]
+        workflow = (repository_root / ".github" / "workflows" / "build.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('  BUILDX_METADATA_PROVENANCE: "false"', workflow)
+        self.assertIn('  DOCKER_BUILD_RECORD_UPLOAD: "false"', workflow)
+
+    def test_public_copy_does_not_describe_the_repository_as_unpublished(self):
+        repository_root = Path(__file__).resolve().parents[2]
+        root_readme = (repository_root / "README.md").read_text(encoding="utf-8")
+        app_readme = (
+            repository_root / "royal-price-dashboard" / "README.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("Installation after public release", root_readme)
+        self.assertNotIn("current release status", app_readme)
+
+    def test_storage_controls_are_present_in_the_dashboard(self):
+        app_root = Path(__file__).resolve().parents[1]
+        index = (app_root / "static" / "index.html").read_text(encoding="utf-8")
+        app_js = (app_root / "static" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="storage-usage"', index)
+        self.assertIn('id="storage-free"', index)
+        self.assertIn("storage.growth_allowed === false", app_js)
+        self.assertIn("storage.message", app_js)
 
     def test_change_cards_keep_history_in_dialog_and_offer_actions(self):
         repository_root = Path(__file__).resolve().parents[1]
@@ -588,6 +602,68 @@ class MultiCruiseTests(unittest.TestCase):
         self.assertTrue(state["setup_required"])
         self.assertEqual(state["cruises"], [])
         self.assertEqual(state["catalog"]["items"], [])
+
+    def test_storage_status_warns_without_blocking_at_one_gibibyte(self):
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        free_bytes = server.STORAGE_WARNING_FREE_BYTES - 1
+        disk = mock.Mock(
+            total=32 * 1024 * 1024 * 1024,
+            used=(32 * 1024 * 1024 * 1024) - free_bytes,
+            free=free_bytes,
+        )
+
+        with mock.patch.object(server.shutil, "disk_usage", return_value=disk):
+            storage = manager.state()["status"]["storage"]
+
+        self.assertEqual(storage["level"], "warning")
+        self.assertTrue(storage["growth_allowed"])
+        self.assertEqual(storage["filesystem_free_bytes"], free_bytes)
+        self.assertGreater(storage["app_data_bytes"], 0)
+        self.assertGreater(storage["history_bytes"], 0)
+        self.assertIn("running low", storage["message"])
+
+        critical_free = server.STORAGE_CRITICAL_FREE_BYTES - 1
+        critical_disk = mock.Mock(
+            total=disk.total,
+            used=disk.total - critical_free,
+            free=critical_free,
+        )
+        with mock.patch.object(
+            server.shutil,
+            "disk_usage",
+            return_value=critical_disk,
+        ):
+            critical = manager.state()["status"]["storage"]
+        self.assertEqual(critical["level"], "critical")
+        self.assertFalse(critical["growth_allowed"])
+        self.assertIn("paused", critical["message"])
+
+    def test_critical_storage_blocks_growth_but_not_existing_state(self):
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        cruise_id = self.add_cruise(
+            manager,
+            ship="Wonder of the Seas",
+            sail_date=self.first_date,
+            description="7 Night Bahamas Cruise",
+        )
+        critical = {
+            "level": "critical",
+            "growth_allowed": False,
+            "message": "Only 128.0 MiB is free. New cruises and price refreshes are paused.",
+        }
+
+        with mock.patch.object(manager, "storage_status", return_value=critical):
+            self.assertFalse(manager.start_refresh(cruise_id))
+            with self.assertRaisesRegex(server.DashboardError, "128.0 MiB"):
+                manager.start_refresh(cruise_id, manual=True)
+            with self.assertRaisesRegex(server.DashboardError, "128.0 MiB"):
+                self.add_cruise(
+                    manager,
+                    ship="Celebrity Beyond",
+                    sail_date=self.second_date,
+                    description="7 Night Caribbean Cruise",
+                )
+            self.assertEqual(manager.state()["active_cruise_id"], cruise_id)
 
     def test_cruise_preferences_and_catalogs_are_isolated_and_reload(self):
         manager = server.CatalogManager(self.data_root, self.options_file)
@@ -1295,6 +1371,36 @@ class MultiCruiseTests(unittest.TestCase):
             (server.REFRESH_FAILURE_BACKOFF_BASE_SECONDS * 2) - 1,
         )
 
+    def test_refresh_rechecks_storage_before_saving_catalog(self):
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        cruise_id = self.add_cruise(
+            manager,
+            ship="Wonder of the Seas",
+            sail_date=self.first_date,
+            description="7 Night Bahamas Cruise",
+        )
+        runtime = manager._runtime(cruise_id)
+        original = self.catalog_for("Wonder of the Seas", self.first_date)
+        runtime.catalog = original
+        replacement = copy.deepcopy(original)
+        replacement["generated_at"] = "2030-01-01T00:00:00+00:00"
+
+        with mock.patch.object(
+            server,
+            "run_browser",
+            return_value=(replacement, None),
+        ), mock.patch.object(
+            manager,
+            "_require_storage_for_growth",
+            side_effect=server.DashboardError("Storage became critically low."),
+        ), mock.patch.object(server.LOGGER, "exception"):
+            runtime.refreshing = True
+            manager._refresh_worker(cruise_id)
+
+        self.assertEqual(runtime.catalog, original)
+        self.assertFalse(runtime.refreshing)
+        self.assertEqual(runtime.last_error, "Storage became critically low.")
+
     def test_http_delete_removes_cruise_and_returns_updated_state(self):
         manager = server.CatalogManager(self.data_root, self.options_file)
         cruise_id = self.add_cruise(
@@ -1462,6 +1568,52 @@ class HistoryStoreTests(unittest.TestCase):
         self.assertEqual(len(history["points"]), 1)
         self.assertEqual(history["summary"]["current_price"], 95.99)
         self.assertEqual(history["summary"]["lowest_price"], 95.99)
+
+    def test_new_history_database_reclaims_deleted_pages(self):
+        key = server.sailing_key(
+            self.options["ship"],
+            self.options["sail_date"],
+            self.options["currency"],
+        )
+        connection = sqlite3.connect(self.store.path)
+        try:
+            self.assertEqual(connection.execute("PRAGMA auto_vacuum").fetchone()[0], 2)
+            connection.executemany(
+                """
+                INSERT INTO price_history (
+                    sailing_key, ship, sail_date, currency,
+                    product_id, observed_at, price, available
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        key,
+                        self.options["ship"],
+                        self.options["sail_date"],
+                        self.options["currency"],
+                        f"product-{index}",
+                        "2026-08-27T03:44:55+00:00",
+                        99.99,
+                        1,
+                    )
+                    for index in range(4_000)
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        before = server.sqlite_file_family_size(self.store.path)
+        deleted = self.store.delete_sailing(self.options)
+        after = server.sqlite_file_family_size(self.store.path)
+
+        self.assertEqual(deleted, 4_000)
+        self.assertLess(after, before)
+        connection = sqlite3.connect(self.store.path)
+        try:
+            self.assertEqual(connection.execute("PRAGMA freelist_count").fetchone()[0], 0)
+        finally:
+            connection.close()
 
     def test_price_and_availability_changes_are_recorded(self):
         self.store.record_catalog(self.catalog, self.options)

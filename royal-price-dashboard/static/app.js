@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.6.0";
+const APP_VERSION = "0.6.1";
 const ALERT_TIPS_STORAGE_KEY = "royal-price-dashboard.alert-tips-dismissed";
 const CHANGE_VISIT_STORAGE_PREFIX = "royal-price-dashboard.change-visit.";
 
@@ -69,6 +69,9 @@ const elements = {
   catalogCount: document.querySelector("#catalog-count"),
   watchCount: document.querySelector("#watch-count"),
   pinnedCount: document.querySelector("#pinned-count"),
+  storageStatus: document.querySelector("#storage-status"),
+  storageUsage: document.querySelector("#storage-usage"),
+  storageFree: document.querySelector("#storage-free"),
   errorBanner: document.querySelector("#error-banner"),
   warningBanner: document.querySelector("#warning-banner"),
   searchInput: document.querySelector("#search-input"),
@@ -104,6 +107,23 @@ function node(tag, className, text) {
 
 function countLabel(count) {
   return `${count} item${count === 1 ? "" : "s"}`;
+}
+
+function formatBytes(value) {
+  if (value === null || value === undefined || value === "") return "Unavailable";
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return "Unavailable";
+  const units = ["bytes", "KiB", "MiB", "GiB", "TiB"];
+  let amount = parsed;
+  for (const unit of units) {
+    if (amount < 1024 || unit === "TiB") {
+      return unit === "bytes"
+        ? `${Math.round(amount)} ${unit}`
+        : `${amount.toFixed(1)} ${unit}`;
+    }
+    amount /= 1024;
+  }
+  return "Unavailable";
 }
 
 function readAlertTipsPreference() {
@@ -1483,6 +1503,30 @@ function renderSettingsStep() {
   );
   fragment.append(summary);
 
+  const storage = model.state?.status?.storage || {};
+  const storageFacts = [];
+  if (storage.app_data_bytes !== null && storage.app_data_bytes !== undefined) {
+    storageFacts.push(`${formatBytes(storage.app_data_bytes)} App data`);
+  }
+  if (
+    storage.filesystem_free_bytes !== null
+    && storage.filesystem_free_bytes !== undefined
+  ) {
+    storageFacts.push(`${formatBytes(storage.filesystem_free_bytes)} free`);
+  }
+  const storageCopy = storageFacts.length
+    ? ` Current storage: ${storageFacts.join(" · ")}.`
+    : "";
+  fragment.append(node(
+    "p",
+    "setup-storage-note",
+    "Each cruise stores one current catalog and change-only history in the App's "
+      + `private data. Removing a cruise deletes its saved data.${storageCopy}`,
+  ));
+  if (storage.message) {
+    fragment.append(node("p", "banner warning", storage.message));
+  }
+
   const settings = node("div", "setup-settings");
   const currencyField = node("label", "field");
   currencyField.append(node("span", "", "Price currency"));
@@ -1534,7 +1578,10 @@ function renderSettingsStep() {
     model.onboarding.busy ? "Adding cruise…" : "Add cruise & build baseline",
   );
   create.type = "button";
-  create.disabled = model.onboarding.busy;
+  create.disabled = model.onboarding.busy || storage.growth_allowed === false;
+  if (storage.growth_allowed === false) {
+    create.textContent = "Free storage to add this cruise";
+  }
   create.addEventListener("click", createCruise);
   fragment.append(setupNavigation(() => {
     model.onboarding.step = "sailing";
@@ -1700,6 +1747,8 @@ function render() {
   const hasActiveCruise = Boolean(activeCruiseId());
   const onboardingVisible = model.onboarding.open || model.state?.setup_required;
   const completed = hasActiveCruise && Boolean(status.completed);
+  const storage = status.storage || {};
+  const storageCritical = storage.growth_allowed === false;
   const refreshCooldown = Math.max(0, Number(status.refresh_cooldown_seconds || 0));
   const buildingInitialCatalog = (
     hasActiveCruise && Boolean(status.refreshing) && data.items.length === 0
@@ -1729,6 +1778,23 @@ function render() {
   elements.catalogCount.textContent = countLabel(data.items.length);
   elements.watchCount.textContent = countLabel(Object.keys(data.watching).length);
   elements.pinnedCount.textContent = countLabel(data.pinned.size);
+  elements.storageUsage.textContent = storage.app_data_bytes === null
+    || storage.app_data_bytes === undefined
+    ? "Unavailable"
+    : `${formatBytes(storage.app_data_bytes)} used`;
+  const storageDetails = [];
+  if (storage.history_bytes !== null && storage.history_bytes !== undefined) {
+    storageDetails.push(`${formatBytes(storage.history_bytes)} history`);
+  }
+  if (
+    storage.filesystem_free_bytes !== null
+    && storage.filesystem_free_bytes !== undefined
+  ) {
+    storageDetails.push(`${formatBytes(storage.filesystem_free_bytes)} free`);
+  }
+  elements.storageFree.textContent = storageDetails.join(" · ") || "Details unavailable";
+  elements.storageStatus.classList.toggle("warning", storage.level === "warning");
+  elements.storageStatus.classList.toggle("critical", storage.level === "critical");
   elements.addCruiseButton.classList.toggle("hidden", Boolean(onboardingVisible));
   elements.removeCruiseButton.classList.toggle(
     "hidden",
@@ -1740,9 +1806,12 @@ function render() {
   );
   elements.exportButton.classList.toggle("hidden", !hasActiveCruise || onboardingVisible);
   elements.refreshButton.disabled = (
-    Boolean(status.refreshing) || refreshCooldown > 0 || !hasActiveCruise
+    Boolean(status.refreshing)
+    || refreshCooldown > 0
+    || !hasActiveCruise
+    || storageCritical
   );
-  elements.addCruiseButton.disabled = model.removingCruise;
+  elements.addCruiseButton.disabled = model.removingCruise || storageCritical;
   elements.removeCruiseButton.disabled = (
     model.removingCruise || Boolean(status.refreshing)
   );
@@ -1767,6 +1836,7 @@ function render() {
   const warnings = [
     status.last_warning,
     status.history?.last_error ? `Price history: ${status.history.last_error}` : null,
+    storage.message,
   ].filter(Boolean);
   elements.warningBanner.textContent = warnings.join(" ");
   elements.warningBanner.classList.toggle("hidden", warnings.length === 0);

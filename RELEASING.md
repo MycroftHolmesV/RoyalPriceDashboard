@@ -18,9 +18,7 @@ publication gate. A merge or ordinary push never publishes an image.
 
 3. Review the complete diff, repeat the tracked-file and history scans, and
    confirm that no token, `.env`, live catalog, preference file, SQLite file,
-   backup, or deployment artifact is present. Confirm that the workflow keeps
-   GitHub event payloads out of build metadata and does not upload Docker build
-   records.
+   backup, or deployment artifact is present.
 4. Let pull-request CI build both declared architectures. Do not infer
    `aarch64` support from an `amd64` build.
 
@@ -33,8 +31,8 @@ publication gate. A merge or ordinary push never publishes an image.
 3. The workflow uses Home Assistant's builder actions to create native
    `amd64` and `aarch64` images, sign them with GitHub OIDC and Cosign, and
    publish one generic multi-architecture manifest tagged `X.Y.Z`.
-4. Confirm that the generic and architecture-specific GHCR packages are public.
-   Image publication and package visibility are separate GitHub actions.
+4. Make the GHCR package public. Image publication and package visibility are
+   separate GitHub actions.
 5. Inspect the published manifest and verify its Cosign signature before an
    installation test.
 

@@ -88,6 +88,18 @@ date, currency, and product. All of that stays in the Home Assistant App's
 private `/data` volume. It is not part of this source repository or Docker build
 context.
 
+The dashboard's **App storage** status reports total files in that private
+volume and free space on the Home Assistant data filesystem. It warns below 1
+GiB free. Below 256 MiB free, new cruises and catalog refreshes pause so this App
+does not make a critically low-storage host worse; existing catalog browsing and
+cruise removal remain available. The App never automatically deletes an active
+cruise or otherwise valid history to recover space.
+
+New history databases use SQLite incremental space reclamation after cruise
+removal and retention cleanup. A database created by an older version can reuse
+freed pages internally even when its filesystem size does not immediately
+shrink.
+
 No Royal Caribbean or Celebrity login is requested or stored. Exporting watches
 produces a YAML snippet in the browser; it does not modify the separate price
 checker automatically.
@@ -124,6 +136,8 @@ without an invalid-option warning.
 - Compact per-sailing history lives in a private SQLite database. Unchanged
   refreshes do not create duplicate points, and a sailing's records expire 30
   days after its sailing date.
+- Storage checks are local to the Home Assistant filesystem. They do not send
+  usage data anywhere.
 - The upstream browser is pinned to commit
   `bf5212c26576d468a6af2043565ece2d01f8b503` and verified by SHA-256 during
   the image build.

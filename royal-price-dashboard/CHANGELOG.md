@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.1
+
+- Report App-private data use and Home Assistant filesystem free space directly
+  in the dashboard and during cruise setup.
+- Warn when less than 1 GiB is free, and pause new cruises and catalog refreshes
+  below 256 MiB while preserving browsing, exports, and cruise removal.
+- Keep storage recovery user-directed. The App never deletes an active cruise or
+  valid history merely to recover space.
+- Reclaim unused SQLite pages after cruise removal and retention cleanup for
+  history databases created by this release. Older databases continue to reuse
+  freed pages safely even when their filesystem size does not immediately
+  shrink.
+- Suppress upload of private Docker build records and sensitive provenance log
+  metadata without disabling signed image provenance or release publication.
+
 ## 0.6.0
 
 - Package the App in the Home Assistant third-party repository layout with a

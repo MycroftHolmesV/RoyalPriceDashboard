@@ -45,6 +45,19 @@ accepted clean start is available.
 - Only a product that the user explicitly watches can create a Home Assistant
   persistent notification.
 
+## Storage safety
+
+Each cruise keeps one current catalog plus compact SQLite price and availability
+history. Unchanged refreshes add no history rows, and saved history expires 30
+days after the sailing. The dashboard reports both App-private data usage and
+free space on the Home Assistant data filesystem.
+
+The App warns when less than 1 GiB is free. Below 256 MiB it pauses new cruises
+and catalog refreshes, while leaving existing catalogs and cruise removal
+available. It never deletes an active cruise or valid history merely to recover
+space. Remove an unneeded cruise to delete its catalog, preferences, and saved
+history.
+
 Royal Price Dashboard uses public prices, which can differ from signed-in or
 reservation-specific offers. It is not affiliated with Royal Caribbean Group,
 Royal Caribbean International, Celebrity Cruises, Home Assistant, or the

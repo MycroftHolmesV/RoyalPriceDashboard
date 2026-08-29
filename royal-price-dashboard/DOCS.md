@@ -100,6 +100,34 @@ single-cruise data is copied into the multi-cruise layout on upgrade without
 deleting the legacy catalog or preferences files. Existing watches are retained,
 but legacy hidden selections do not become pins.
 
+## Storage
+
+The **App storage** card shows the size of the App's private `/data` volume and
+the free space on the Home Assistant data filesystem. Storage use includes the
+current catalog and preferences for each cruise, the shared SQLite history
+database, and any retained legacy files. The container image is separate fixed
+overhead and does not grow when cruises are added.
+
+- Each cruise keeps only its current catalog. A refresh atomically replaces
+  that catalog rather than retaining another complete snapshot.
+- History stores an initial baseline and then only actual price or availability
+  changes. A refresh with no changes adds no history rows.
+- History remains until 30 days after the sailing date. A sailing added far in
+  advance can therefore accumulate history for its entire lead time.
+- The App warns when less than 1 GiB is free. Below 256 MiB, adding cruises and
+  price refreshes pause. Browsing, exporting watches, and removing cruises
+  remain available.
+- Removing a cruise deletes its catalog, preferences, and history. New history
+  databases return deleted SQLite pages to the filesystem. Databases created by
+  older versions may retain freed pages for later reuse instead of shrinking
+  immediately.
+- Nothing automatically deletes an active cruise or valid history solely to
+  recover space. Remove completed or unwanted cruises yourself, and manage
+  other Home Assistant storage from the host's storage tools.
+
+Home Assistant backups include this data, so additional cruises and longer
+history also increase backup size.
+
 ## Restarts, backups, and recovery
 
 - Catalog writes and preferences use atomic file replacement. If Home Assistant

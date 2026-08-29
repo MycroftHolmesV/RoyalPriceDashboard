@@ -30,6 +30,4 @@ inside the App-private `/data` volume unless the user exports watch-list YAML.
 Container construction verifies the pinned upstream source checksum. The
 release workflow prepares Cosign-signed `amd64` and `aarch64` images, but no
 image is published without an explicit matching GitHub release. A custom
-AppArmor profile is not currently included. Any future profile will be developed
-in complain mode and enforced only after it has been exercised on a real Home
-Assistant installation.
+AppArmor profile is not currently included.

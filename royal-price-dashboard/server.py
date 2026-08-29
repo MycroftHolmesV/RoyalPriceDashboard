@@ -28,7 +28,7 @@ from typing import Any
 
 APP_ROOT = Path(__file__).resolve().parent
 STATIC_ROOT = APP_ROOT / "static"
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.6.1"
 DATA_ROOT = Path(os.environ.get("ROYAL_PRICE_DATA_DIR", "/data"))
 OPTIONS_FILE = Path(
     os.environ.get("ROYAL_PRICE_OPTIONS_FILE", "/data/options.json")
@@ -48,6 +48,8 @@ ALLOWED_CLIENTS = frozenset(
     if value.strip()
 )
 HISTORY_RETENTION_DAYS_AFTER_SAILING = 30
+STORAGE_WARNING_FREE_BYTES = 1 * 1024 * 1024 * 1024
+STORAGE_CRITICAL_FREE_BYTES = 256 * 1024 * 1024
 DISCOVERY_CACHE_SECONDS = 6 * 60 * 60
 MANUAL_REFRESH_COOLDOWN_SECONDS = 10 * 60
 REFRESH_FAILURE_BACKOFF_BASE_SECONDS = 15 * 60
@@ -238,6 +240,45 @@ def write_json_atomic(path: Path, payload: Any) -> None:
         except OSError:
             pass
         raise
+
+
+def format_storage_bytes(value: int) -> str:
+    amount = float(max(0, value))
+    for unit in ("bytes", "KiB", "MiB", "GiB", "TiB"):
+        if amount < 1024 or unit == "TiB":
+            if unit == "bytes":
+                whole_bytes = int(amount)
+                label = "byte" if whole_bytes == 1 else "bytes"
+                return f"{whole_bytes} {label}"
+            return f"{amount:.1f} {unit}"
+        amount /= 1024
+    raise AssertionError("unreachable")
+
+
+def regular_file_tree_size(root: Path) -> int:
+    """Measure regular files below root without following symbolic links."""
+    if not root.exists():
+        return 0
+    total = 0
+    pending = [root]
+    while pending:
+        current = pending.pop()
+        with os.scandir(current) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(Path(entry.path))
+                elif entry.is_file(follow_symlinks=False):
+                    total += entry.stat(follow_symlinks=False).st_size
+    return total
+
+
+def sqlite_file_family_size(path: Path) -> int:
+    total = 0
+    for suffix in ("", "-wal", "-shm"):
+        candidate = Path(f"{path}{suffix}")
+        if candidate.is_file() and not candidate.is_symlink():
+            total += candidate.stat().st_size
+    return total
 
 
 def sailing_key(ship: str, sail_date: str, currency: str) -> str:
@@ -772,6 +813,11 @@ class HistoryStore:
 
     def _initialize(self) -> None:
         with self._connect() as connection:
+            existing_table = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1"
+            ).fetchone()
+            if existing_table is None:
+                connection.execute("PRAGMA auto_vacuum = INCREMENTAL")
             connection.execute("PRAGMA journal_mode = WAL")
             connection.execute("PRAGMA synchronous = NORMAL")
             connection.execute(
@@ -797,6 +843,22 @@ class HistoryStore:
                 """
             )
             connection.execute("PRAGMA user_version = 1")
+
+    def _reclaim_unused_pages(self) -> None:
+        """Return deleted pages to the filesystem for new incremental databases."""
+        try:
+            with self._connect() as connection:
+                mode = int(connection.execute("PRAGMA auto_vacuum").fetchone()[0])
+                if mode == 2:
+                    free_pages = int(
+                        connection.execute("PRAGMA freelist_count").fetchone()[0]
+                    )
+                    for _ in range(free_pages):
+                        connection.execute("PRAGMA incremental_vacuum(1)")
+                    connection.commit()
+                    connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.Error as error:
+            LOGGER.warning("Could not reclaim unused price-history pages: %s", error)
 
     @staticmethod
     def _sailing_details(
@@ -1025,7 +1087,10 @@ class HistoryStore:
                 "DELETE FROM price_history WHERE sailing_key = ?",
                 (key,),
             )
-            return cursor.rowcount
+            deleted = cursor.rowcount
+        if deleted:
+            self._reclaim_unused_pages()
+        return deleted
 
     def purge_expired(self, today: date | None = None) -> int:
         current_date = today or datetime.now(timezone.utc).date()
@@ -1037,7 +1102,10 @@ class HistoryStore:
                 "DELETE FROM price_history WHERE sail_date <= ?",
                 (cutoff.isoformat(),),
             )
-            return cursor.rowcount
+            deleted = cursor.rowcount
+        if deleted:
+            self._reclaim_unused_pages()
+        return deleted
 
 
 class CruiseRuntime:
@@ -1156,6 +1224,70 @@ class CatalogManager:
             raise DashboardError("Unknown cruise.")
         return runtime
 
+    def storage_status(self) -> dict[str, Any]:
+        app_data_bytes: int | None = None
+        history_bytes: int | None = None
+        measurement_error: str | None = None
+        try:
+            app_data_bytes = regular_file_tree_size(self.data_root)
+            history_bytes = sqlite_file_family_size(self.history_file)
+        except OSError:
+            measurement_error = "Some App data files could not be measured."
+
+        filesystem_total_bytes: int | None = None
+        filesystem_free_bytes: int | None = None
+        free_percent: float | None = None
+        try:
+            disk = shutil.disk_usage(self.data_root)
+            filesystem_total_bytes = int(disk.total)
+            filesystem_free_bytes = int(disk.free)
+            if disk.total > 0:
+                free_percent = round((disk.free / disk.total) * 100, 1)
+        except OSError:
+            measurement_error = (
+                "Available Home Assistant storage could not be measured."
+            )
+
+        level = "unknown"
+        message = measurement_error
+        if filesystem_free_bytes is not None:
+            if filesystem_free_bytes < STORAGE_CRITICAL_FREE_BYTES:
+                level = "critical"
+                message = (
+                    f"Only {format_storage_bytes(filesystem_free_bytes)} is free on "
+                    "the Home Assistant data filesystem. New cruises and price "
+                    f"refreshes are paused until at least "
+                    f"{format_storage_bytes(STORAGE_CRITICAL_FREE_BYTES)} is free."
+                )
+            elif filesystem_free_bytes < STORAGE_WARNING_FREE_BYTES:
+                level = "warning"
+                message = (
+                    "Home Assistant storage is running low: "
+                    f"{format_storage_bytes(filesystem_free_bytes)} is free. Remove "
+                    "completed cruises or free host storage before adding more."
+                )
+            else:
+                level = "ok"
+
+        return {
+            "level": level,
+            "growth_allowed": level != "critical",
+            "message": message,
+            "app_data_bytes": app_data_bytes,
+            "history_bytes": history_bytes,
+            "filesystem_total_bytes": filesystem_total_bytes,
+            "filesystem_free_bytes": filesystem_free_bytes,
+            "free_percent": free_percent,
+            "warning_free_bytes": STORAGE_WARNING_FREE_BYTES,
+            "critical_free_bytes": STORAGE_CRITICAL_FREE_BYTES,
+        }
+
+    def _require_storage_for_growth(self) -> dict[str, Any]:
+        storage = self.storage_status()
+        if not storage["growth_allowed"]:
+            raise DashboardError(str(storage["message"]))
+        return storage
+
     def _load_or_migrate_cruises(self) -> None:
         if self.registry_file.exists():
             try:
@@ -1240,6 +1372,7 @@ class CatalogManager:
         *,
         validate_discovery: bool = False,
     ) -> str:
+        self._require_storage_for_growth()
         canonical_raw = raw
         if validate_discovery:
             requested_id = str(raw.get("ship_id") or "").strip()
@@ -1513,6 +1646,7 @@ class CatalogManager:
                     ),
                     "last_error": self.history_error,
                 },
+                "storage": self.storage_status(),
             }
             return {
                 "setup_required": active is None,
@@ -1909,6 +2043,11 @@ class CatalogManager:
                 )
             if runtime.refreshing:
                 return False
+            storage = self.storage_status()
+            if not storage["growth_allowed"]:
+                if manual:
+                    raise DashboardError(str(storage["message"]))
+                return False
             cooldown_seconds = self._refresh_cooldown_seconds(runtime)
             if cooldown_seconds > 0:
                 if manual:
@@ -1941,6 +2080,7 @@ class CatalogManager:
         try:
             with self.refresh_gate:
                 catalog, warning = run_browser(copy.deepcopy(runtime.config))
+            self._require_storage_for_growth()
             with self.lock:
                 runtime = self._runtime(cruise_id)
                 runtime.catalog = catalog
