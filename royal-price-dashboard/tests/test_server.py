@@ -94,6 +94,22 @@ class ParserTests(unittest.TestCase):
             "https://github.com/MycroftHolmesV/RoyalPriceDashboard",
             repository_config,
         )
+        workflow = (
+            repository_root / ".github" / "workflows" / "build.yml"
+        ).read_text(encoding="utf-8")
+        self.assertRegex(
+            workflow,
+            r'(?m)^  BUILDX_METADATA_PROVENANCE: "false"$',
+        )
+        self.assertRegex(
+            workflow,
+            r'(?m)^  DOCKER_BUILD_RECORD_UPLOAD: "false"$',
+        )
+        root_readme = (repository_root / "README.md").read_text(encoding="utf-8")
+        self.assertNotIn("have not been published", root_readme)
+        self.assertNotIn("Installation after public release", root_readme)
+        security = (repository_root / "SECURITY.md").read_text(encoding="utf-8")
+        self.assertNotIn("remains a release gate", security)
         self.assertIn(
             f'const APP_VERSION = "{version}";',
             (app_root / "static" / "app.js").read_text(encoding="utf-8"),

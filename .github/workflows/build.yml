@@ -24,6 +24,8 @@ concurrency:
 env:
   APP_DIR: royal-price-dashboard
   ARCHITECTURES: '["amd64", "aarch64"]'
+  BUILDX_METADATA_PROVENANCE: "false"
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
   IMAGE_NAME: royal-price-dashboard
   REGISTRY_PREFIX: ghcr.io/mycroftholmesv
 

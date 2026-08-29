@@ -14,7 +14,7 @@ The App is packaged for this independent third-party Home Assistant repository
 with signed, versioned `amd64` and `aarch64` images. It does not require HACS,
 jdeath's Home Assistant repository, the separate personalized price-checker
 App, or a cruise-line account. See the [repository installation
-guide](../README.md) for the current release status and setup steps.
+guide](../README.md) for installation and setup steps.
 
 On first run, **Add cruise** guides you through Royal Caribbean or Celebrity,
 live public ship discovery, an actual future sailing, currency, and notification
@@ -131,8 +131,8 @@ without an invalid-option warning.
   its supported TLS-impersonation path for public endpoints that reject plain
   HTTP clients.
 
-See the [security policy](../SECURITY.md) for reporting guidance and the remaining
-hardening gates.
+See the [security policy](../SECURITY.md) for vulnerability reporting and
+details about the App's security boundary.
 
 ## Upstream relationship
 

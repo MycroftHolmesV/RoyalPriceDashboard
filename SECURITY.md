@@ -8,9 +8,10 @@ made on the latest release only.
 ## Reporting a vulnerability
 
 Please do not include credentials, Home Assistant tokens, reservation details,
-or a copy of the App's `/data` directory in a public issue. Once the public
-repository is available, use its private vulnerability-reporting feature. Until
-then, report suspected vulnerabilities privately to the repository owner.
+or a copy of the App's `/data` directory in a public issue. Use the repository's
+**Report a vulnerability** form to send suspected vulnerabilities privately. If
+that form is unavailable, open an issue containing no vulnerability details and
+ask the maintainer to arrange a private reporting channel.
 
 ## Security boundary
 
@@ -29,5 +30,6 @@ inside the App-private `/data` volume unless the user exports watch-list YAML.
 Container construction verifies the pinned upstream source checksum. The
 release workflow prepares Cosign-signed `amd64` and `aarch64` images, but no
 image is published without an explicit matching GitHub release. A custom
-AppArmor profile remains a release gate until it has been developed in complain
-mode and exercised on a real Home Assistant installation.
+AppArmor profile is not currently included. Any future profile will be developed
+in complain mode and enforced only after it has been exercised on a real Home
+Assistant installation.

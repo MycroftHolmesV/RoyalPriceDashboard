@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 (public repository candidate)
+## 0.6.0
 
 - Package the App in the Home Assistant third-party repository layout with a
   root `repository.yaml` and one-click My Home Assistant repository link.

@@ -5,15 +5,9 @@ Royal Caribbean and Celebrity Cruise Planner prices, keeping per-sailing
 shortlists, explicitly watching selected products, and reviewing compact price
 history.
 
-> [!IMPORTANT]
-> This source is prepared as a public release candidate, but the GitHub
-> repository and signed container images have not been published. The install
-> link below is ready for the public release. It will not work until those
-> approval-gated steps are complete.
-
 [![Add the Royal Price Dashboard repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FMycroftHolmesV%2FRoyalPriceDashboard)
 
-## Installation after public release
+## Installation
 
 Royal Price Dashboard requires a Home Assistant installation with the Apps
 store, such as Home Assistant OS or Home Assistant Supervised.
