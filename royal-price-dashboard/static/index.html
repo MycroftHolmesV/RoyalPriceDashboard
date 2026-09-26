@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <title>Royal Prices</title>
-    <link rel="stylesheet" href="./styles.css?v=0.6.3">
+    <link rel="stylesheet" href="./styles.css?v=0.6.4">
   </head>
   <body>
     <main class="shell">
@@ -139,6 +139,10 @@
             <div>
               <strong id="changes-heading">Changes since last visit</strong>
               <p id="changes-period"></p>
+              <label class="penny-change-filter" title="Hide one-cent price increases and decreases. Availability changes still appear.">
+                <input id="hide-penny-changes" type="checkbox" checked>
+                <span>Hide 1¢ changes</span>
+              </label>
             </div>
             <div class="change-options">
               <div class="change-option">
@@ -215,6 +219,6 @@
     </dialog>
 
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-    <script src="./app.js?v=0.6.3" defer></script>
+    <script src="./app.js?v=0.6.4" defer></script>
   </body>
 </html>

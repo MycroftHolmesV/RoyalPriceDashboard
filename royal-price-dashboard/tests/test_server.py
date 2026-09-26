@@ -1331,6 +1331,131 @@ class MultiCruiseTests(unittest.TestCase):
         self.assertEqual(latest_items["changes"][0]["price"], 84.99)
         self.assertEqual(latest_items["total"], 2)
 
+    def test_penny_filter_precedes_latest_selection_and_preserves_history(self):
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        cruise_id = self.add_cruise(
+            manager,
+            ship="Wonder of the Seas",
+            sail_date=self.first_date,
+            description="7 Night Bahamas Cruise",
+        )
+        runtime = manager._runtime(cruise_id)
+        runtime.catalog = self.catalog_for("Wonder of the Seas", self.first_date)
+        items = {item["id"]: item for item in runtime.catalog["items"]}
+        snapshots = [
+            (27, 95.99, 61.99, None),
+            (28, 79.99, 61.99, None),
+            (29, 80.00, 62.00, 40.00),
+            (30, 79.99, 61.99, None),
+        ]
+        for day, beverage, excursion, water in snapshots:
+            runtime.catalog["generated_at"] = f"2026-08-{day}T03:44:55+00:00"
+            for product_id, price in (("3222", beverage), ("ZH01", excursion), ("0904", water)):
+                items[product_id]["price"] = price
+                items[product_id]["price_available"] = price is not None
+            manager._record_history(cruise_id)
+        manager.set_watching("3222", True, cruise_id=cruise_id)
+        preferences_before = copy.deepcopy(runtime.preferences)
+        history_before = manager.history_for("3222", cruise_id)
+        unfiltered = manager.changes_for(cruise_id, scope="all", latest_only=True)
+        self.assertEqual(unfiltered["total"], 3)
+        self.assertFalse(unfiltered["hide_penny_changes"])
+
+        filtered = manager.changes_for(
+            cruise_id, scope="all", latest_only=True, hide_penny_changes=True,
+        )
+        self.assertEqual(filtered["total"], 2)
+        self.assertEqual(
+            [event["product_id"] for event in filtered["changes"]], ["0904", "3222"],
+        )
+        self.assertFalse(filtered["changes"][0]["available"])
+        self.assertEqual(filtered["changes"][1]["price_delta"], -16.0)
+        self.assertEqual(filtered["changes"][1]["observed_at"], "2026-08-28T03:44:55+00:00")
+        for field in ("watched_latest", "watched_price_stats"):
+            self.assertEqual(filtered[field], unfiltered[field])
+        self.assertEqual(filtered["watched_latest"]["3222"]["price_delta"], -0.01)
+
+        limited = manager.changes_for(
+            cruise_id, scope="all", latest_only=True, hide_penny_changes=True, limit=1,
+        )
+        self.assertEqual(limited["total"], 2)
+        self.assertTrue(limited["truncated"])
+        self.assertEqual(limited["changes"], filtered["changes"][:1])
+        watched = manager.changes_for(
+            cruise_id, scope="watched", latest_only=True, hide_penny_changes=True,
+        )
+        self.assertEqual(watched["changes"], filtered["changes"][1:])
+        for scope, expected_ids in (("all", ["0904"]), ("watched", [])):
+            with self.subTest(scope=scope):
+                recent = manager.changes_for(
+                    cruise_id, scope=scope, latest_only=True, hide_penny_changes=True,
+                    since="2026-08-28T03:44:55+00:00",
+                )
+                self.assertEqual(
+                    [event["product_id"] for event in recent["changes"]], expected_ids,
+                )
+        every_matching_event = manager.changes_for(
+            cruise_id, scope="all", hide_penny_changes=True,
+        )
+        availability_events = [
+            event for event in every_matching_event["changes"] if event["product_id"] == "0904"
+        ]
+        self.assertEqual([event["available"] for event in availability_events], [False, True])
+        self.assertEqual(every_matching_event["total"], 3)
+        self.assertEqual(manager.history_for("3222", cruise_id), history_before)
+        self.assertEqual(len(history_before["points"]), 4)
+        self.assertEqual(runtime.preferences, preferences_before)
+
+    def test_changes_http_penny_filter_keeps_two_cent_moves_and_can_be_disabled(self):
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        cruise_id = self.add_cruise(
+            manager,
+            ship="Wonder of the Seas",
+            sail_date=self.first_date,
+            description="7 Night Bahamas Cruise",
+        )
+        runtime = manager._runtime(cruise_id)
+        runtime.catalog = self.catalog_for("Wonder of the Seas", self.first_date)
+        beverage = next(item for item in runtime.catalog["items"] if item["id"] == "3222")
+        for day, price in enumerate((95.99, 96.01, 95.99, 96.00), start=27):
+            runtime.catalog["generated_at"] = f"2026-08-{day}T03:44:55+00:00"
+            beverage["price"] = price
+            manager._record_history(cruise_id)
+
+        with mock.patch.object(server.DashboardHandler, "manager", manager, create=True):
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.DashboardHandler)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            try:
+                endpoint = (
+                    f"http://127.0.0.1:{httpd.server_port}/api/cruises/{cruise_id}/changes"
+                    "?scope=all"
+                )
+                with urllib.request.urlopen(endpoint + "&hide_penny_changes=true", timeout=5) as response:
+                    filtered = json.load(response)
+                self.assertTrue(filtered["hide_penny_changes"])
+                self.assertEqual(
+                    [event["price_delta"] for event in filtered["changes"]], [-0.02, 0.02],
+                )
+                for setting, expected_delta in (("true", -0.02), ("false", 0.01), (None, 0.01)):
+                    with self.subTest(setting=setting):
+                        url = endpoint + "&latest_only=true"
+                        if setting is not None:
+                            url += f"&hide_penny_changes={setting}"
+                        with urllib.request.urlopen(url, timeout=5) as response:
+                            payload = json.load(response)
+                        self.assertEqual(payload["total"], 1)
+                        self.assertEqual(payload["changes"][0]["price_delta"], expected_delta)
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(endpoint + "&hide_penny_changes=yes", timeout=5)
+                with caught.exception as error:
+                    self.assertEqual(error.code, HTTPStatus.BAD_REQUEST)
+                    self.assertIn("hide_penny_changes must be true or false", json.load(error)["error"])
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=5)
+
     def test_refresh_cooldown_blocks_manual_and_scheduled_retries(self):
         manager = server.CatalogManager(self.data_root, self.options_file)
         cruise_id = self.add_cruise(
