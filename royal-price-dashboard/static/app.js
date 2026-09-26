@@ -1,8 +1,9 @@
 "use strict";
 
-const APP_VERSION = "0.6.3";
+const APP_VERSION = "0.6.4";
 const ALERT_TIPS_STORAGE_KEY = "royal-price-dashboard.alert-tips-dismissed";
 const CHANGE_VISIT_STORAGE_PREFIX = "royal-price-dashboard.change-visit.";
+const HIDE_PENNY_CHANGES_STORAGE_KEY = "royal-price-dashboard.hide-penny-changes";
 
 const model = {
   state: null,
@@ -19,6 +20,7 @@ const model = {
   historyCache: new Map(),
   changeScope: "all",
   changePeriod: "since",
+  hidePennyChanges: true,
   changeSessions: new Map(),
   changesVisitedAt: null,
   changesSince: null,
@@ -81,6 +83,7 @@ const elements = {
   changesControls: document.querySelector("#changes-controls"),
   changesHeading: document.querySelector("#changes-heading"),
   changesPeriod: document.querySelector("#changes-period"),
+  hidePennyChanges: document.querySelector("#hide-penny-changes"),
   changePeriodButtons: [...document.querySelectorAll("[data-change-period]")],
   changeScopeButtons: [...document.querySelectorAll("[data-change-scope]")],
   resultsSummary: document.querySelector("#results-summary"),
@@ -132,6 +135,26 @@ function readAlertTipsPreference() {
   } catch (_error) {
     return false;
   }
+}
+
+function readHidePennyChangesPreference() {
+  try {
+    return window.localStorage.getItem(HIDE_PENNY_CHANGES_STORAGE_KEY) !== "false";
+  } catch (_error) {
+    return true;
+  }
+}
+
+function setHidePennyChanges(enabled) {
+  model.hidePennyChanges = enabled;
+  try {
+    window.localStorage.setItem(HIDE_PENNY_CHANGES_STORAGE_KEY, String(enabled));
+  } catch (_error) {
+    // The filter still works when a WebView blocks local storage.
+  }
+  invalidateChanges({ clearLatest: false });
+  renderCatalog();
+  loadChanges();
 }
 
 function renderAlertTips() {
@@ -514,6 +537,7 @@ function changeRequestKey() {
     generatedAt,
     model.changeScope,
     model.changePeriod,
+    model.hidePennyChanges,
     model.changePeriod === "since" ? model.changesSince || "recent" : "all",
     watches,
   ].join("|");
@@ -536,6 +560,7 @@ async function loadChanges({ force = false } = {}) {
   const query = new URLSearchParams({
     scope: model.changeScope,
     limit: model.changePeriod === "all" ? "500" : "100",
+    hide_penny_changes: String(model.hidePennyChanges),
   });
   query.set("latest_only", "true");
   if (model.changePeriod === "since" && model.changesSince) {
@@ -1110,12 +1135,14 @@ function renderChanges() {
   const response = model.changes;
   const changes = response?.changes || [];
   const showingAllChanges = model.changePeriod === "all";
+  const latestChangeLabel = model.hidePennyChanges ? "Latest matching change" : "Latest change";
+  elements.hidePennyChanges.checked = model.hidePennyChanges;
   elements.changesHeading.textContent = showingAllChanges
     ? "All changed items"
     : "Changes since last visit";
   if (showingAllChanges) {
     elements.changesPeriod.textContent = (
-      "Each product with a recorded price or availability change appears once, newest first."
+      `${latestChangeLabel} per item across all saved history, newest first.`
     );
   } else if (model.changesVisitedAt && model.changesSince) {
     const visitWasBounded = (
@@ -1123,11 +1150,11 @@ function renderChanges() {
       < new Date(model.changesVisitedAt).valueOf()
     );
     elements.changesPeriod.textContent = visitWasBounded
-      ? `Latest change per item since ${formatTimestamp(model.changesSince)}. A minimum one-day lookback keeps same-day visits useful.`
-      : `Latest change per item since this device last opened the cruise on ${formatTimestamp(model.changesVisitedAt)}.`;
+      ? `${latestChangeLabel} per item since ${formatTimestamp(model.changesSince)}. A minimum one-day lookback keeps same-day visits useful.`
+      : `${latestChangeLabel} per item since this device last opened the cruise on ${formatTimestamp(model.changesVisitedAt)}.`;
   } else {
     elements.changesPeriod.textContent = (
-      "First visit on this device, so each item's latest recorded change is shown."
+      `First visit on this device. ${latestChangeLabel} per item across all saved history.`
     );
   }
   elements.changePeriodButtons.forEach((button) => {
@@ -1164,6 +1191,9 @@ function renderChanges() {
     if (model.changeScope === "watched" && !hasWatches) {
       elements.emptyTitle.textContent = "Nothing watched yet";
       elements.emptyCopy.textContent = "Choose All items here, or add a watch from the catalog.";
+    } else if (model.hidePennyChanges) {
+      elements.emptyTitle.textContent = "No matching changes";
+      elements.emptyCopy.textContent = "Turn off Hide 1¢ changes to include penny moves in this view.";
     } else if (model.changeScope === "watched") {
       elements.emptyTitle.textContent = "No watched changes here";
       elements.emptyCopy.textContent = "Choose All items to include changes elsewhere in the catalog.";
@@ -1930,6 +1960,10 @@ elements.changeScopeButtons.forEach((button) => {
   });
 });
 
+elements.hidePennyChanges.addEventListener("change", () => {
+  setHidePennyChanges(elements.hidePennyChanges.checked);
+});
+
 elements.changePeriodButtons.forEach((button) => {
   button.addEventListener("click", () => {
     const period = button.dataset.changePeriod;
@@ -1990,6 +2024,7 @@ elements.cruiseSelect.addEventListener("change", () => {
 });
 
 model.alertTipsDismissed = readAlertTipsPreference();
+model.hidePennyChanges = readHidePennyChangesPreference();
 renderAlertTips();
 loadState();
 window.setInterval(() => loadState({ quiet: true }), 30_000);

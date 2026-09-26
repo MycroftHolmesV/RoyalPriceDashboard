@@ -55,6 +55,10 @@ the lookback newer than the start of yesterday in the browser's local time.
 **All changed items** removes the visit window while still showing only the
 latest change per product. The first visit also shows the latest change per
 product. **View history** retains the full saved timeline for each item.
+**Hide 1¢ changes** is on by default and remembered in this browser. It hides
+one-cent increases and decreases, showing the latest matching change per item
+within the selected period. Availability changes still appear. Turn it off to
+include penny moves. Full history and watch alerts are unaffected.
 Watched product cards also show the date and amount of their most recent actual
 price change.
 

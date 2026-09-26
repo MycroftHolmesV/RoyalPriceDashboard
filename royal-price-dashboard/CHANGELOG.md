@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.4
+
+- Add **Hide 1¢ changes** to the Changes view, enabled by default and remembered
+  in the current browser. Turn it off to include one-cent increases and decreases.
+- Show each item's latest matching change within the selected period, so a later
+  penny move does not hide an earlier larger change. Availability changes remain
+  visible in both product scopes and both periods.
+- Preserve the full saved history, watched-price summaries, and existing alerts.
+
 ## 0.6.3
 
 - Show each product only once in both Changes views, using its latest recorded

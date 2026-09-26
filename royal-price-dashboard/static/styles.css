@@ -727,6 +727,25 @@ h1 {
   gap: 12px;
 }
 
+.penny-change-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  min-height: 44px;
+  color: var(--navy);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.penny-change-filter input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--blue);
+}
+
 .change-option {
   display: grid;
   gap: 4px;

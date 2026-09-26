@@ -28,7 +28,7 @@ from typing import Any
 
 APP_ROOT = Path(__file__).resolve().parent
 STATIC_ROOT = APP_ROOT / "static"
-APP_VERSION = "0.6.3"
+APP_VERSION = "0.6.4"
 DATA_ROOT = Path(os.environ.get("ROYAL_PRICE_DATA_DIR", "/data"))
 OPTIONS_FILE = Path(
     os.environ.get("ROYAL_PRICE_OPTIONS_FILE", "/data/options.json")
@@ -1724,6 +1724,7 @@ class CatalogManager:
         since: str | None = None,
         limit: int = 100,
         latest_only: bool = False,
+        hide_penny_changes: bool = False,
     ) -> dict[str, Any]:
         if scope not in {"watched", "all"}:
             raise DashboardError("Changes scope must be watched or all.")
@@ -1800,6 +1801,11 @@ class CatalogManager:
             if event["product_id"] in allowed_ids
             and event["product_id"] in item_index
             and is_after_since(event)
+            and not (
+                hide_penny_changes
+                and event["previous_available"] == event["available"]
+                and event["price_delta"] in (-0.01, 0.01)
+            )
         ]
         if latest_only:
             seen_product_ids: set[str] = set()
@@ -1869,6 +1875,7 @@ class CatalogManager:
             "since": since_at.isoformat() if since_at is not None else None,
             "limit": limit,
             "latest_only": latest_only,
+            "hide_penny_changes": hide_penny_changes,
             "total": len(matching),
             "truncated": len(matching) > limit,
             "changes": changes,
@@ -2374,6 +2381,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     raise DashboardError(
                         "Changes latest_only must be true or false."
                     )
+                raw_hide_penny_changes = query.get(
+                    "hide_penny_changes", ["false"]
+                )[0].lower()
+                if raw_hide_penny_changes not in {"true", "false"}:
+                    raise DashboardError(
+                        "Changes hide_penny_changes must be true or false."
+                    )
                 try:
                     limit = int(raw_limit)
                 except (TypeError, ValueError) as error:
@@ -2387,6 +2401,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         since=since,
                         limit=limit,
                         latest_only=raw_latest_only == "true",
+                        hide_penny_changes=raw_hide_penny_changes == "true",
                     )
                 )
             except DashboardError as error:

@@ -55,6 +55,10 @@ The repository cannot change this per-install Home Assistant preference.
   only the latest change per product. On the first visit, when no prior browser
   timestamp exists, the latest change per product is shown. **View history**
   retains the full saved timeline for each item.
+- **Hide 1¢ changes** is on by default and remembered in this browser. It hides
+  one-cent increases and decreases in Changes, showing each product's latest
+  matching change within the selected period. Availability changes still appear.
+  Turn it off to include penny moves. Full history and watch alerts are unaffected.
 - A watched product card shows the date, amount, and resulting price of its
   latest actual price change. The initial history baseline is not presented as
   a price change.
