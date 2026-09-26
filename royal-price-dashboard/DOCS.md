@@ -47,13 +47,14 @@ The repository cannot change this per-install Home Assistant preference.
   including pinned and unwatched items. Select the compact chart to open a
   larger version with more readable price labels. On a narrow screen, scroll
   sideways within the expanded chart to see the full timeline.
-- **Changes** defaults to all products and shows recorded price and availability
-  changes since this browser last opened that cruise. The lookback cannot be
-  newer than the start of yesterday in the browser's local time. Choose
-  **Watched** to narrow the products, or **All changed items** to show each
-  product with recorded changes once using its latest change and date. On the
-  first visit, when no prior browser timestamp exists, the latest recorded
-  changes are shown.
+- **Changes** defaults to all products and shows each product's latest price or
+  availability change since this browser last opened that cruise, newest first.
+  Each product appears only once. The lookback cannot be newer than the start
+  of yesterday in the browser's local time. Choose **Watched** to narrow the
+  products, or **All changed items** to remove the visit window while keeping
+  only the latest change per product. On the first visit, when no prior browser
+  timestamp exists, the latest change per product is shown. **View history**
+  retains the full saved timeline for each item.
 - A watched product card shows the date, amount, and resulting price of its
   latest actual price change. The initial history baseline is not presented as
   a price change.
