@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.6.2";
+const APP_VERSION = "0.6.3";
 const ALERT_TIPS_STORAGE_KEY = "royal-price-dashboard.alert-tips-dismissed";
 const CHANGE_VISIT_STORAGE_PREFIX = "royal-price-dashboard.change-visit.";
 
@@ -537,9 +537,8 @@ async function loadChanges({ force = false } = {}) {
     scope: model.changeScope,
     limit: model.changePeriod === "all" ? "500" : "100",
   });
-  if (model.changePeriod === "all") {
-    query.set("latest_only", "true");
-  } else if (model.changesSince) {
+  query.set("latest_only", "true");
+  if (model.changePeriod === "since" && model.changesSince) {
     query.set("since", model.changesSince);
   }
   try {
@@ -1124,11 +1123,11 @@ function renderChanges() {
       < new Date(model.changesVisitedAt).valueOf()
     );
     elements.changesPeriod.textContent = visitWasBounded
-      ? `Showing changes since ${formatTimestamp(model.changesSince)}. A minimum one-day lookback keeps same-day visits useful.`
-      : `This device last opened the cruise on ${formatTimestamp(model.changesVisitedAt)}.`;
+      ? `Latest change per item since ${formatTimestamp(model.changesSince)}. A minimum one-day lookback keeps same-day visits useful.`
+      : `Latest change per item since this device last opened the cruise on ${formatTimestamp(model.changesVisitedAt)}.`;
   } else {
     elements.changesPeriod.textContent = (
-      "First visit on this device, so the latest recorded changes are shown."
+      "First visit on this device, so each item's latest recorded change is shown."
     );
   }
   elements.changePeriodButtons.forEach((button) => {
@@ -1178,7 +1177,7 @@ function renderChanges() {
 
   const shown = changes.length;
   const scopeLabel = model.changeScope === "watched" ? "watched " : "";
-  const resultLabel = showingAllChanges ? "changed item" : "change";
+  const resultLabel = "changed item";
   const more = response?.truncated ? ` First ${response.limit} shown.` : "";
   elements.resultsSummary.textContent = (
     `${shown} ${scopeLabel}${resultLabel}${shown === 1 ? "" : "s"} shown.${more}`

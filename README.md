@@ -38,12 +38,6 @@ Users do not need HACS, jdeath's Home Assistant repository, the separate Royal
 Caribbean Price Check App, or a cruise-line login. The checksum-pinned jdeath
 browser is packaged into this App image under its MIT license.
 
-If you have a local development copy named `local_royal_price_dashboard`, the
-repository version is a separate Home Assistant App with a separate private
-`/data` volume. Installing it is not an in-place update of the local copy. Do
-not remove the local copy until a separately tested migration path or an
-accepted clean start is available.
-
 ## What stays separate
 
 - Browsing the catalog never enables notifications.

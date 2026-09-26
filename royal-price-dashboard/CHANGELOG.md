@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.3
+
+- Show each product only once in both Changes views, using its latest recorded
+  price or availability change, newest first.
+- Keep the visit window and watched-product filters, with the full saved
+  timeline still available through **View history**.
+- Remove the one-time local-development installation warning from the root
+  README.
+
 ## 0.6.2
 
 - Explain that Home Assistant leaves **Show in sidebar** off for a new App

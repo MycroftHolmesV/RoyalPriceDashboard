@@ -49,10 +49,12 @@ It deliberately keeps four concepts separate:
 The **Changes** view answers the everyday "what changed since I last opened
 this dashboard?" question. It defaults to all products, can be narrowed to
 watched products, and remembers the prior visit separately for each cruise in
-the current browser. A visit timestamp is never allowed to make the lookback
-newer than the start of yesterday in the browser's local time. **All changed
-items** instead shows each product with a recorded change once, using its latest
-change and date. The first visit shows the latest recorded changes.
+the current browser. Each product appears once with its latest price or
+availability change, newest first. A visit timestamp is never allowed to make
+the lookback newer than the start of yesterday in the browser's local time.
+**All changed items** removes the visit window while still showing only the
+latest change per product. The first visit also shows the latest change per
+product. **View history** retains the full saved timeline for each item.
 Watched product cards also show the date and amount of their most recent actual
 price change.
 
