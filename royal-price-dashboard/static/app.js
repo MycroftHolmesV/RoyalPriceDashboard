@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.6.4";
+const APP_VERSION = "0.6.5";
 const ALERT_TIPS_STORAGE_KEY = "royal-price-dashboard.alert-tips-dismissed";
 const CHANGE_VISIT_STORAGE_PREFIX = "royal-price-dashboard.change-visit.";
 const HIDE_PENNY_CHANGES_STORAGE_KEY = "royal-price-dashboard.hide-penny-changes";
@@ -621,18 +621,17 @@ function createHistoryChart(history, { expanded = false } = {}) {
     return Number.isFinite(parsed) ? parsed : index;
   });
   const firstTime = Math.min(...times);
-  const lastTime = Math.max(...times);
+  const lastTime = Math.max(Date.now(), ...times);
   const timeSpan = Math.max(1, lastTime - firstTime);
-  const xFor = (index) => points.length === 1
-    ? padding.left + plotWidth / 2
-    : padding.left + ((times[index] - firstTime) / timeSpan) * plotWidth;
+  const xFor = (index) => padding.left
+    + ((times[index] - firstTime) / timeSpan) * plotWidth;
   const yFor = (price) => padding.top
     + ((maximum - Number(price)) / (maximum - minimum)) * plotHeight;
 
   const svg = svgNode("svg", {
     class: expanded ? "history-chart expanded-history-chart" : "history-chart",
     viewBox: `0 0 ${width} ${height}`,
-    role: "img",
+    role: "group",
     "aria-label": `${history.item.name} price history`,
   });
   svg.append(svgNode("title", {}, `${history.item.name} price history`));
@@ -674,26 +673,75 @@ function createHistoryChart(history, { expanded = false } = {}) {
     pathData += previousWasAvailable ? ` H ${x} V ${y}` : ` M ${x} ${y}`;
     previousWasAvailable = true;
   });
-  if (pricedPoints.length === 1 && points.length === 1) {
-    const y = yFor(pricedPoints[0].price);
-    pathData = `M ${padding.left} ${y} H ${width - padding.right}`;
+  // Carry the last known price forward without creating a saved observation.
+  if (previousWasAvailable && lastTime > times.at(-1)) {
+    pathData += ` H ${width - padding.right}`;
   }
   svg.append(svgNode("path", { class: "history-line", d: pathData.trim() }));
 
+  const detail = node(
+    "p",
+    "history-point-detail",
+    "Tap or click a price point for its exact price and date.",
+  );
+  detail.setAttribute("aria-live", "polite");
+  const markers = [];
+  const selectMarker = (selected) => {
+    markers.forEach((marker) => {
+      const active = marker === selected;
+      marker.classList.toggle("selected", active);
+      marker.setAttribute("aria-pressed", String(active));
+    });
+    detail.textContent = selected.getAttribute("aria-label");
+  };
   points.forEach((point, index) => {
     if (!point.available || point.price === null || point.price === undefined) return;
+    const label = `${formatCurrency(point.price, history.sailing.currency)} on ${shortDate(point.observed_at)}`;
     const marker = svgNode("circle", {
       class: "history-price-point",
       cx: xFor(index),
       cy: yFor(point.price),
       r: expanded ? 7 : 4.5,
+      role: "button",
+      tabindex: "0",
+      "aria-label": label,
+      "aria-pressed": "false",
     });
-    marker.append(svgNode(
-      "title",
-      {},
-      `${formatCurrency(point.price, history.sailing.currency)} on ${shortDate(point.observed_at)}`,
-    ));
+    marker.append(svgNode("title", {}, label));
+    marker.addEventListener("click", (event) => {
+      event.stopPropagation();
+      selectMarker(marker);
+    });
+    marker.addEventListener("focus", () => selectMarker(marker));
+    marker.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      event.stopPropagation();
+      selectMarker(marker);
+    });
+    markers.push(marker);
     svg.append(marker);
+  });
+  svg.addEventListener("click", (event) => {
+    // Use screen pixels so the tap target stays useful when the chart shrinks.
+    let closest = null;
+    let closestDistance = 22;
+    markers.forEach((marker) => {
+      const bounds = marker.getBoundingClientRect();
+      const distance = Math.hypot(
+        event.clientX - (bounds.left + bounds.width / 2),
+        event.clientY - (bounds.top + bounds.height / 2),
+      );
+      if (distance <= closestDistance) {
+        closest = marker;
+        closestDistance = distance;
+      }
+    });
+    if (closest) {
+      selectMarker(closest);
+    } else if (!expanded) {
+      openExpandedHistory(history);
+    }
   });
 
   svg.append(svgNode("text", {
@@ -702,15 +750,26 @@ function createHistoryChart(history, { expanded = false } = {}) {
     y: height - 10,
     "text-anchor": "start",
   }, shortDate(points[0].observed_at)));
-  if (points.length > 1) {
+  if (lastTime > firstTime) {
     svg.append(svgNode("text", {
       class: "history-axis-label",
       x: width - padding.right,
       y: height - 10,
       "text-anchor": "end",
-    }, shortDate(points.at(-1).observed_at)));
+    }, shortDate(lastTime)));
   }
-  return svg;
+  const view = node("div", "history-chart-view");
+  const frame = node("div", "history-chart-frame");
+  frame.append(svg);
+  view.append(frame, detail);
+  if (!expanded) {
+    const expand = node("button", "row-action", "Expand chart");
+    expand.type = "button";
+    expand.setAttribute("aria-label", `Expand price history chart for ${history.item.name}`);
+    expand.addEventListener("click", () => openExpandedHistory(history));
+    view.append(expand);
+  }
+  return view;
 }
 
 async function loadHistory(itemId, { force = false } = {}) {
@@ -810,21 +869,7 @@ function createHistoryPanel(item) {
   );
   summary.append(eventStat);
   panel.append(summary);
-  const chart = createHistoryChart(history);
-  if (chart.nodeName.toLowerCase() === "svg") {
-    const chartTrigger = node("button", "history-chart-trigger");
-    chartTrigger.type = "button";
-    chartTrigger.setAttribute(
-      "aria-label",
-      `Expand price history chart for ${history.item.name}`,
-    );
-    chartTrigger.title = "Open a larger price history chart";
-    chartTrigger.append(chart);
-    chartTrigger.addEventListener("click", () => openExpandedHistory(history));
-    panel.append(chartTrigger);
-  } else {
-    panel.append(chart);
-  }
+  panel.append(createHistoryChart(history));
 
   const points = history.points || [];
   const note = points.length <= 1

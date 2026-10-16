@@ -1079,25 +1079,27 @@ h1 {
   font-family: inherit;
 }
 
-.history-chart-trigger {
-  display: block;
-  width: 100%;
-  padding: 4px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  cursor: zoom-in;
+.history-chart-frame {
+  overflow-x: auto;
 }
 
-.history-chart-trigger:hover,
-.history-chart-trigger:focus-visible {
-  background: rgba(8, 120, 209, 0.05);
-  border-color: rgba(8, 120, 209, 0.35);
-  outline: none;
+.history-point-detail {
+  min-height: 1.5em;
+  margin: 8px 0;
+  color: var(--navy);
+  font-size: 0.9rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
-.history-chart-trigger .history-chart {
-  pointer-events: none;
+.history-chart-view .history-price-point {
+  cursor: pointer;
+}
+
+.history-chart-view .history-price-point.selected,
+.history-chart-view .history-price-point:focus-visible {
+  stroke: var(--navy);
+  stroke-width: 3;
 }
 
 .history-grid-line {

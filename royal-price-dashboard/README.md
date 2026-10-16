@@ -70,9 +70,13 @@ available price points. At least two price points are required. Because history
 stores the initial baseline and later changes without duplicating unchanged
 refreshes, this is a recorded-price average rather than a time-weighted average.
 
-Each item's compact history chart remains quick to scan. Select the chart to
-open a much larger view with more readable price labels; narrow screens can
-scroll across the expanded chart.
+Each item's history chart extends through today, carrying the last available
+price forward so stable prices stay visible. This also works with a single
+saved baseline. Unavailable prices are not carried forward, and the extension
+does not add saved observations. Tap or click a recorded price point to display
+its exact price and date, or focus it with a keyboard. Select **Expand chart**
+for a larger view; narrow screens can scroll across the expanded chart while
+the selected price stays visible below it.
 
 Product rows can reveal the public catalog description through a compact
 **Show description** control. Descriptions remain collapsed by default, are
