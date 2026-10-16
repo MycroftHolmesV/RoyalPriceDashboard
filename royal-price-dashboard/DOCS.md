@@ -7,6 +7,17 @@ then appears as **Royal Prices** with a ship-wheel icon. If the shortcut remains
 off, return through **Settings > Apps > Royal Price Dashboard > Open Web UI**.
 The repository cannot change this per-install Home Assistant preference.
 
+## Inspect price stability and exact prices
+
+Price history charts extend through today at the last available price without
+creating duplicate saved observations. A single saved baseline can show a flat
+line; a currently unavailable price is not extended.
+
+Tap or click a price point to show its exact price and date below the chart.
+Keyboard users can focus a point or select it with Enter or Space. Choose
+**Expand chart** for a larger view. On a narrow screen, scroll across that chart
+while the price readout remains below it. Desktop hover tooltips remain available.
+
 ## Cruises
 
 - A clean installation opens with **Add cruise**. Choose Royal Caribbean or

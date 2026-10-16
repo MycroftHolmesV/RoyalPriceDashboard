@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.5
+
+- Extend price history charts through today using the last available price,
+  including histories with only an initial baseline. Unavailable prices are
+  not extended, and no extra observations are saved.
+- Tap or click a recorded price point to show its exact price and date in
+  compact and expanded charts. Larger touch targets and keyboard selection
+  make the points easier to inspect on phones and with a keyboard.
+- Keep an explicit **Expand chart** button, desktop hover tooltips, and the
+  existing saved history and watch-alert behavior.
+
 ## 0.6.4
 
 - Add **Hide 1¢ changes** to the Changes view, enabled by default and remembered
