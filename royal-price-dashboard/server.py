@@ -28,7 +28,7 @@ from typing import Any
 
 APP_ROOT = Path(__file__).resolve().parent
 STATIC_ROOT = APP_ROOT / "static"
-APP_VERSION = "0.6.5"
+APP_VERSION = "0.6.6"
 DATA_ROOT = Path(os.environ.get("ROYAL_PRICE_DATA_DIR", "/data"))
 OPTIONS_FILE = Path(
     os.environ.get("ROYAL_PRICE_OPTIONS_FILE", "/data/options.json")
@@ -1829,7 +1829,7 @@ class CatalogManager:
             and (decorated := decorate(event)) is not None
         }
 
-        def watched_price_stat(
+        def price_stat(
             product_id: str,
             stats: dict[str, Any],
         ) -> dict[str, Any] | None:
@@ -1858,11 +1858,15 @@ class CatalogManager:
                 ),
             }
 
-        watched_price_stats = {
+        price_stats = {
             product_id: result
             for product_id, stats in history_changes["price_stats"].items()
+            if (result := price_stat(product_id, stats)) is not None
+        }
+        watched_price_stats = {
+            product_id: stats
+            for product_id, stats in price_stats.items()
             if product_id in watched_ids
-            and (result := watched_price_stat(product_id, stats)) is not None
         }
         sailing = catalog_copy.get("sailing", {})
         return {
@@ -1880,6 +1884,7 @@ class CatalogManager:
             "truncated": len(matching) > limit,
             "changes": changes,
             "watched_latest": watched_latest,
+            "price_stats": price_stats,
             "watched_price_stats": watched_price_stats,
         }
 
