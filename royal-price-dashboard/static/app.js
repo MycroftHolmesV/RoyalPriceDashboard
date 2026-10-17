@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.6.5";
+const APP_VERSION = "0.6.6";
 const ALERT_TIPS_STORAGE_KEY = "royal-price-dashboard.alert-tips-dismissed";
 const CHANGE_VISIT_STORAGE_PREFIX = "royal-price-dashboard.change-visit.";
 const HIDE_PENNY_CHANGES_STORAGE_KEY = "royal-price-dashboard.hide-penny-changes";
@@ -29,7 +29,7 @@ const model = {
   changesError: "",
   changesRequestKey: null,
   watchedLatestChanges: new Map(),
-  watchedPriceStats: new Map(),
+  priceStats: new Map(),
   alertTipsDismissed: false,
   onboarding: {
     open: false,
@@ -289,7 +289,7 @@ function invalidateChanges({ clearLatest = true } = {}) {
   model.changesRequestKey = null;
   if (clearLatest) {
     model.watchedLatestChanges.clear();
-    model.watchedPriceStats.clear();
+    model.priceStats.clear();
   }
 }
 
@@ -485,7 +485,7 @@ function createBadge(text, className) {
 }
 
 function createPriceBadge(item) {
-  const stats = model.watchedPriceStats.get(item.id);
+  const stats = model.priceStats.get(item.id);
   if (!stats?.record_low && !stats?.below_average) return null;
   const count = Number(stats.recorded_price_count);
   const average = formatCurrency(stats.average_price, item.currency);
@@ -575,8 +575,8 @@ async function loadChanges({ force = false } = {}) {
     model.watchedLatestChanges = new Map(
       Object.entries(response.watched_latest || {}),
     );
-    model.watchedPriceStats = new Map(
-      Object.entries(response.watched_price_stats || {}),
+    model.priceStats = new Map(
+      Object.entries(response.price_stats || response.watched_price_stats || {}),
     );
     commitChangeSession(cruiseId);
   } catch (error) {
@@ -919,10 +919,8 @@ function createRow(item, data) {
   const titleLine = node("div", "item-title-line");
   titleLine.append(node("h2", "item-name", item.name));
   if (watch) titleLine.append(createBadge("Watching", "watching"));
-  if (watch) {
-    const priceBadge = createPriceBadge(item);
-    if (priceBadge) titleLine.append(priceBadge);
-  }
+  const priceBadge = createPriceBadge(item);
+  if (priceBadge) titleLine.append(priceBadge);
   if (isPinned) titleLine.append(createBadge("Pinned", "pinned"));
   identity.append(titleLine);
 
@@ -1098,6 +1096,8 @@ function createChangeRow(change, data) {
   const titleLine = node("div", "item-title-line");
   titleLine.append(node("h2", "item-name", item.name));
   if (watch) titleLine.append(createBadge("Watching", "watching"));
+  const priceBadge = createPriceBadge(catalogItem);
+  if (priceBadge) titleLine.append(priceBadge);
   if (isPinned) titleLine.append(createBadge("Pinned", "pinned"));
   identity.append(titleLine);
   identity.append(node(

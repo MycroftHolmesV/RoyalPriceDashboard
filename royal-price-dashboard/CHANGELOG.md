@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.6
+
+- Show **Record low** and **Below average** badges for qualifying products
+  without requiring a watch or pin.
+- Display the same price badges on catalog cards and in the Changes view.
+- Base badges on full saved price history independently of the Changes scope,
+  period, penny filter, and pagination. A single baseline or an unavailable
+  current price still does not receive a price badge.
+- Preserve existing watch-only alerts, watch targets, pins, and saved history.
+
 ## 0.6.5
 
 - Extend price history charts through today using the last available price,

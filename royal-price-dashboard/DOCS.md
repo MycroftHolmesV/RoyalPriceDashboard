@@ -73,13 +73,14 @@ while the price readout remains below it. Desktop hover tooltips remain availabl
 - A watched product card shows the date, amount, and resulting price of its
   latest actual price change. The initial history baseline is not presented as
   a price change.
-- A watched product with at least two saved available prices shows **Record
+- Any product with at least two saved available prices shows **Record
   low** when its current price matches the lowest saved price and an earlier
   saved price was higher. Otherwise it shows **Below average** when the current
   price is below the arithmetic mean of its saved available price points. Hover
   for the current price, average, and sample count; assistive technology gets
   the same explanation. Unchanged refreshes are not duplicated, so the mean is
-  not time-weighted.
+  not time-weighted. These badges appear on catalog cards and in Changes. They
+  do not require pinning or watching and do not enable alerts.
 - **Show description** expands Royal's public product description when the feed
   supplies one. Descriptions stay collapsed by default and are included in
   search results.

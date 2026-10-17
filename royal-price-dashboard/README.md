@@ -62,7 +62,9 @@ include penny moves. Full history and watch alerts are unaffected.
 Watched product cards also show the date and amount of their most recent actual
 price change.
 
-Watched products with enough history can receive a factual price badge.
+Products with enough history can receive a factual price badge, whether or not
+they are pinned or watched. These badges appear on catalog cards and in Changes
+and do not enable alerts.
 **Record low** means the current price matches the lowest saved available price
 and at least one saved price was higher. Otherwise, **Below average** means the
 current price is below that product's arithmetic mean across its saved

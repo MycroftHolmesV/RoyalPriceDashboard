@@ -1240,6 +1240,67 @@ class MultiCruiseTests(unittest.TestCase):
         self.assertEqual(manager.state()["status"]["refresh_mode"], "unwatched")
         self.assertFalse(manager.is_refresh_due(cruise_id))
 
+    def test_price_badges_include_unwatched_products_without_enabling_alerts(self):
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        cruise_id = self.add_cruise(
+            manager,
+            ship="Wonder of the Seas",
+            sail_date=self.first_date,
+            description="7 Night Bahamas Cruise",
+        )
+        runtime = manager._runtime(cruise_id)
+        baseline = self.catalog_for("Wonder of the Seas", self.first_date)
+        baseline["generated_at"] = "2026-08-27T03:44:55+00:00"
+        runtime.catalog = baseline
+        manager._record_history(cruise_id)
+        initial = manager.changes_for(cruise_id, scope="all")["price_stats"]
+        self.assertFalse(initial["3222"]["record_low"])
+        self.assertFalse(initial["3222"]["below_average"])
+        self.assertNotIn("0904", initial)
+
+        changed = copy.deepcopy(baseline)
+        changed["generated_at"] = "2026-08-28T03:44:55+00:00"
+        next(item for item in changed["items"] if item["id"] == "3222")[
+            "price"
+        ] = 79.99
+        runtime.catalog = changed
+        manager._record_history(cruise_id)
+        history_before = manager.history_for("3222", cruise_id)
+        preferences_before = copy.deepcopy(runtime.preferences)
+
+        # Badge facts use full history even when the Changes list is empty.
+        for scope in ("all", "watched"):
+            with self.subTest(scope=scope):
+                response = manager.changes_for(
+                    cruise_id,
+                    scope=scope,
+                    since="2099-01-01T00:00:00+00:00",
+                    latest_only=True,
+                    hide_penny_changes=True,
+                    limit=1,
+                )
+                stats = response["price_stats"]["3222"]
+                self.assertEqual(stats["recorded_price_count"], 2)
+                self.assertEqual(stats["current_price"], 79.99)
+                self.assertEqual(stats["lowest_price"], 79.99)
+                self.assertTrue(stats["record_low"])
+                self.assertTrue(stats["below_average"])
+                self.assertEqual(response["changes"], [])
+                self.assertEqual(response["watched_price_stats"], {})
+                self.assertEqual(response["watched_latest"], {})
+
+        self.assertEqual(runtime.preferences, preferences_before)
+        self.assertEqual(manager.history_for("3222", cruise_id), history_before)
+        with manager.lock:
+            self.assertEqual(manager._alert_candidates_locked(cruise_id), [])
+
+        manager.set_watching("3222", True, cruise_id=cruise_id)
+        watched = manager.changes_for(cruise_id, scope="watched")
+        self.assertEqual(
+            watched["watched_price_stats"]["3222"],
+            watched["price_stats"]["3222"],
+        )
+
     def test_recent_changes_can_be_scoped_to_watched_products(self):
         manager = server.CatalogManager(self.data_root, self.options_file)
         cruise_id = self.add_cruise(
