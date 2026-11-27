@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.7
+
+- Keep the last complete catalog when a product fetch fails and retry automatically.
+- Keep missing products in Watching so their targets and saved history stay accessible.
+- Keep automatic refreshes running for other cruises when a cruise is removed.
+- Preserve target edits during background updates and keep late history responses on the correct sailing.
+- End price charts at the last confirmed catalog observation for the product.
+
 ## 0.6.6
 
 - Show **Record low** and **Below average** badges for qualifying products
