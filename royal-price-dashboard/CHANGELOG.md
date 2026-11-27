@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.8
+
+- Finish catalog pagination when Royal reports the last product page.
+- Keep the previous catalog if Royal fails to return a required page.
+
 ## 0.6.7
 
 - Keep the last complete catalog when a product fetch fails and retry automatically.
