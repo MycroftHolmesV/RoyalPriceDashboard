@@ -101,6 +101,9 @@ jobs:
       - name: Check frontend syntax
         run: node --check static/app.js
 
+      - name: Run frontend regression tests
+        run: node --test tests/test_frontend.mjs
+
   build:
     name: Check ${{ matrix.arch }} build
     needs: prepare

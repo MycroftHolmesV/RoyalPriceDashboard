@@ -80,6 +80,43 @@ def emit_description_markers(
             logger(DESCRIPTION_MARKER + marker)
 
 
+def validate_catalog_response(operation: str, response: Any) -> None:
+    # The pinned browser treats a failed request just like an empty final page.
+    if response is None:
+        raise RuntimeError("A product catalog page request failed.")
+    body = response.json()
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, dict):
+        raise RuntimeError("A product catalog page had no result.")
+    errors = body.get("errors")
+    if operation == "WebCategories":
+        container = data.get("categories")
+        categories = container.get("categories") if isinstance(container, dict) else None
+        if errors or not isinstance(categories, list) or any(
+            not isinstance(category, dict) or not category.get("id") or not category.get("name")
+            for category in categories
+        ):
+            raise RuntimeError("The product catalog category list was incomplete.")
+        return
+
+    container = data.get("products")
+    if not isinstance(container, dict) or "commerceProducts" not in container:
+        raise RuntimeError("A product catalog page had no product result.")
+    products = container["commerceProducts"]
+    if products is not None and not isinstance(products, list):
+        raise RuntimeError("A product catalog page had an invalid product list.")
+    # A missing optional description leaves the product identity and quote intact.
+    for error in errors or []:
+        path = error.get("path") if isinstance(error, dict) else None
+        if not (
+            isinstance(path, list) and len(path) == 4
+            and path[:2] == ["products", "commerceProducts"]
+            and isinstance(path[2], int) and isinstance(products, list)
+            and 0 <= path[2] < len(products) and path[3] == "description"
+        ):
+            raise RuntimeError("A product catalog page returned GraphQL errors.")
+
+
 def install_extensions(namespace: dict[str, Any]) -> None:
     """Extend the exact pinned module without modifying its source file."""
     original_request = namespace.get("_execute_api_request")
@@ -93,7 +130,12 @@ def install_extensions(namespace: dict[str, Any]) -> None:
             kwargs["json_data"] = add_description_to_product_query(
                 kwargs.get("json_data")
             )
-        return original_request(*args, **kwargs)
+        response = original_request(*args, **kwargs)
+        payload = kwargs.get("json_data")
+        operation = payload.get("operationName") if isinstance(payload, dict) else None
+        if operation in ("WebCategories", "WebProductsByCategory"):
+            validate_catalog_response(operation, response)
+        return response
 
     def print_with_description_markers(
         products: Any,

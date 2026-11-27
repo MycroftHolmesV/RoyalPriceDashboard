@@ -9,9 +9,9 @@ The repository cannot change this per-install Home Assistant preference.
 
 ## Inspect price stability and exact prices
 
-Price history charts extend through today at the last available price without
-creating duplicate saved observations. A single saved baseline can show a flat
-line; a currently unavailable price is not extended.
+Price history charts carry a stable price through the latest catalog check
+that included the product. Repeated checks at that price share a single
+saved observation. A chart for a completed sailing ends at its last check.
 
 Tap or click a price point to show its exact price and date below the chart.
 Keyboard users can focus a point or select it with Enter or Space. Choose
@@ -48,6 +48,8 @@ while the price readout remains below it. Desktop hover tooltips remain availabl
 - **Watch** stores the item's current public price as its initial target.
   Notifications occur only if a later refresh is below that target.
 - Edit the target beside a watched item to choose a specific buy price.
+- A watched product that disappears from the catalog stays in **Watching**.
+  You can change its target, inspect its saved history, or remove the watch.
 - **Pin** adds an item to that cruise's shortlist without removing it from
   **All**. Use the **Pinned** tab to focus on the shortlist; **Unpin** removes it.
 - If a cruise has pinned items, its dashboard opens on **Pinned**. Otherwise it
@@ -90,6 +92,9 @@ while the price readout remains below it. Desktop hover tooltips remain availabl
   run until the cruise's return date. A cruise with at least one explicit watch
   refreshes every 12 hours by default; a cruise with no watches refreshes every
   24 hours. Pins do not affect the schedule.
+- If the product catalog is incomplete, the dashboard keeps the last complete
+  catalog and retries. A failure while gathering later sailing information
+  can still produce a warning alongside a complete product catalog.
 - After any refresh starts, that cruise waits at least 10 minutes before another
   manual or scheduled attempt. A failed upstream request uses exponential retry
   delays beginning at 15 minutes and capped at six hours, so an outage cannot

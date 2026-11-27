@@ -14,6 +14,7 @@ publication gate. A merge or ordinary push never publishes an image.
    python -m unittest discover -s tests -v
    python -m py_compile server.py upstream_adapter.py tests/test_server.py
    node --check static/app.js
+   node --test tests/test_frontend.mjs
    ```
 
 3. Review the complete diff, repeat the tracked-file and history scans, and
