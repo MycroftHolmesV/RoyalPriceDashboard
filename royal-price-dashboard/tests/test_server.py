@@ -351,10 +351,12 @@ class UpstreamAdapterTests(unittest.TestCase):
     PRODUCT_QUERY = """
     query WebProductsByCategory {
       products {
-        commerceProducts {
-          id
-          title
-          variantOptions { code name }
+        ... on CommerceProductResultSuccess {
+          commerceProducts {
+            id
+            title
+            variantOptions { code name }
+          }
         }
       }
     }
@@ -363,7 +365,7 @@ class UpstreamAdapterTests(unittest.TestCase):
     def payload(self, category="shorex"):
         return {
             "operationName": "WebProductsByCategory",
-            "variables": {"category": category},
+            "variables": {"category": category, "currentPage": 0, "pageSize": 12},
             "query": self.PRODUCT_QUERY,
         }
 
@@ -373,13 +375,14 @@ class UpstreamAdapterTests(unittest.TestCase):
             server.PRODUCT_DESCRIPTION_MARKER,
         )
         original = self.payload()
-        updated = upstream_adapter.add_description_to_product_query(original)
+        updated = upstream_adapter.extend_product_query(original)
 
         self.assertIsNot(updated, original)
         self.assertIn("title description", updated["query"])
+        self.assertIn("pageInfo { hasNextPage }", updated["query"])
         self.assertNotIn("title description", original["query"])
         beverage = self.payload("beverage")
-        updated_beverage = upstream_adapter.add_description_to_product_query(
+        updated_beverage = upstream_adapter.extend_product_query(
             beverage
         )
         self.assertIsNot(updated_beverage, beverage)
@@ -391,7 +394,7 @@ class UpstreamAdapterTests(unittest.TestCase):
             "query": self.PRODUCT_QUERY,
         }
         self.assertIs(
-            upstream_adapter.add_description_to_product_query(unrelated),
+            upstream_adapter.extend_product_query(unrelated),
             unrelated,
         )
 
@@ -400,7 +403,9 @@ class UpstreamAdapterTests(unittest.TestCase):
         printed = []
         logged = []
         api_response = mock.Mock()
-        api_response.json.return_value = {"data": {"products": {"commerceProducts": []}}}
+        api_response.json.return_value = {"data": {"products": {
+            "commerceProducts": [], "pageInfo": {"hasNextPage": False},
+        }}}
 
         def original_request(*args, **kwargs):
             requests.append((args, kwargs))
@@ -484,9 +489,14 @@ class UpstreamAdapterTests(unittest.TestCase):
                 response.json.return_value = invalid
                 wrapped(json_data=self.payload())
         for end_page in ([], None):
-            response.json.return_value = {"data": {"products": {"commerceProducts": end_page}}}
+            response.json.return_value = {"data": {"products": {
+                "commerceProducts": end_page, "pageInfo": {"hasNextPage": False},
+            }}}
             self.assertIs(wrapped(json_data=self.payload()), response)
-        data = {"products": {"commerceProducts": [{"id": "3222", "description": None}]}}
+        data = {"products": {
+            "commerceProducts": [{"id": "3222", "description": None}],
+            "pageInfo": {"hasNextPage": False},
+        }}
         for field in ("id", "price"):
             response.json.return_value = {
                 "data": data, "errors": [{"path": ["products", "commerceProducts", 0, field]}],
@@ -497,6 +507,85 @@ class UpstreamAdapterTests(unittest.TestCase):
             "data": data, "errors": [{"path": ["products", "commerceProducts", 0, "description"]}],
         }
         self.assertIs(wrapped(json_data=self.payload()), response)
+
+    def test_product_pagination_stops_after_the_reported_final_page(self):
+        for first_count, last_count in ((12, 1), (12, 12), (1, 1)):
+            with self.subTest(first_count=first_count, last_count=last_count):
+                requested = []
+
+                def request(*, json_data):
+                    variables = json_data["variables"]
+                    page = variables["currentPage"]
+                    category = variables["category"]
+                    requested.append((category, page))
+                    response = mock.Mock()
+                    if page > 1:
+                        result = {"exceptions": [{"__typename": "CommerceProductNotFound", "code": "404"}]}
+                    else:
+                        count = first_count if page == 0 else last_count
+                        offset = 0 if page == 0 else first_count
+                        result = {
+                            "commerceProducts": [{"id": offset + i} for i in range(count)],
+                            "pageInfo": {"hasNextPage": page == 0},
+                        }
+                    response.json.return_value = {"data": {"products": result}}
+                    return response
+
+                namespace = {"_execute_api_request": request, "print_and_sort_products": mock.Mock()}
+                upstream_adapter.install_extensions(namespace)
+                # The pinned browser asks for a further page after every nonempty list.
+                for category in ("beverage", "dining"):
+                    payload = self.payload(category)
+                    found = []
+                    for page in range(3):
+                        payload["variables"]["currentPage"] = page
+                        response = namespace["_execute_api_request"](json_data=payload)
+                        if not response:
+                            break
+                        found.extend(response.json()["data"]["products"]["commerceProducts"])
+                    self.assertEqual(
+                        [product["id"] for product in found], list(range(first_count + last_count))
+                    )
+                self.assertEqual(requested, [
+                    ("beverage", 0), ("beverage", 1), ("dining", 0), ("dining", 1),
+                ])
+
+    def test_only_a_typed_not_found_on_the_first_product_page_means_empty(self):
+        not_found = {"__typename": "CommerceProductNotFound", "code": "404"}
+        invalid_category = {"__typename": "InvalidCategoryException", "code": "404"}
+        response = mock.Mock()
+        for page, exceptions, errors, empty in (
+            (0, [not_found], [], True),
+            (1, [not_found], [], False),
+            (0, [not_found], [{"message": "Incomplete result"}], False),
+            (0, [invalid_category], [], False),
+            (0, [not_found, invalid_category], [], False),
+            (0, [{**not_found, "code": "500"}], [], False),
+            (0, [], [], False),
+        ):
+            with self.subTest(page=page, exceptions=exceptions, errors=errors):
+                response.json.return_value = {"data": {"products": {"exceptions": exceptions}}, "errors": errors}
+                if empty:
+                    self.assertIs(upstream_adapter.validate_catalog_response("WebProductsByCategory", response, page), False)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "product exception"):
+                        upstream_adapter.validate_catalog_response("WebProductsByCategory", response, page)
+
+    def test_product_pages_require_consistent_pagination(self):
+        response = mock.Mock()
+        for page, products, page_info in (
+            (0, [{"id": "3222"}], None),
+            (0, [{"id": "3222"}], {"hasNextPage": "false"}),
+            (0, [], {"hasNextPage": True}),
+            (1, [], {"hasNextPage": False}),
+            (99, [{"id": "3222"}], {"hasNextPage": True}),
+        ):
+            with self.subTest(page=page, products=products, page_info=page_info):
+                response.json.return_value = {"data": {"products": {
+                    "commerceProducts": products, "pageInfo": page_info,
+                }}}
+                with self.assertRaises(RuntimeError):
+                    upstream_adapter.validate_catalog_response("WebProductsByCategory", response, page)
 
     def test_category_discovery_rejects_partial_graphql_results(self):
         response = mock.Mock()
@@ -514,7 +603,7 @@ class UpstreamAdapterTests(unittest.TestCase):
         fake_source = """
 class Response:
     def json(self):
-        return {"data": {"products": {"commerceProducts": []}}}
+        return {"data": {"products": {"commerceProducts": [], "pageInfo": {"hasNextPage": False}}}}
 
 def _execute_api_request(*args, **kwargs):
     print(kwargs["json_data"]["query"])
@@ -528,8 +617,8 @@ log = print
 def main(args=None):
     _execute_api_request(json_data={
         "operationName": "WebProductsByCategory",
-        "variables": {"category": "beverage"},
-        "query": "commerceProducts { id title variantOptions { code } }",
+        "variables": {"category": "beverage", "currentPage": 0},
+        "query": "... on CommerceProductResultSuccess { commerceProducts { id title variantOptions { code } } }",
     })
     print_and_sort_products(
         [{"id": "ZH01", "description": "Adapter description."}],

@@ -15,8 +15,8 @@ PINNED_SCRIPT_ENV = "ROYAL_PRICE_PINNED_SCRIPT"
 DEFAULT_PINNED_SCRIPT = Path("/opt/upstream/BrowseRoyalCaribbeanPrice.py")
 
 
-def add_description_to_product_query(payload: Any) -> Any:
-    """Request descriptions for every public product catalog category."""
+def extend_product_query(payload: Any) -> Any:
+    """Request product descriptions, page boundaries, and typed catalog errors."""
     if not isinstance(payload, dict):
         return payload
     if payload.get("operationName") != "WebProductsByCategory":
@@ -38,7 +38,14 @@ def add_description_to_product_query(payload: Any) -> Any:
         )
 
     updated = copy.deepcopy(payload)
-    updated["query"] = updated_query
+    success_fragment = "... on CommerceProductResultSuccess {"
+    if updated_query.count(success_fragment) != 1:
+        raise RuntimeError("The pinned upstream product result has an unexpected shape.")
+    updated["query"] = updated_query.replace(
+        success_fragment,
+        "... on CommerceProductExceptions { exceptions { __typename code } }\n"
+        + success_fragment + "\npageInfo { hasNextPage }",
+    )
     return updated
 
 
@@ -80,7 +87,8 @@ def emit_description_markers(
             logger(DESCRIPTION_MARKER + marker)
 
 
-def validate_catalog_response(operation: str, response: Any) -> None:
+def validate_catalog_response(operation: str, response: Any, page: int = 0) -> bool | None:
+    """Validate the response and return hasNextPage for a product request."""
     # The pinned browser treats a failed request just like an empty final page.
     if response is None:
         raise RuntimeError("A product catalog page request failed.")
@@ -97,9 +105,17 @@ def validate_catalog_response(operation: str, response: Any) -> None:
             for category in categories
         ):
             raise RuntimeError("The product catalog category list was incomplete.")
-        return
+        return None
 
     container = data.get("products")
+    if isinstance(container, dict) and "exceptions" in container:
+        # A shore-excursion day with no products returns this typed 404 on page zero.
+        # A missing later page contradicts the prior response's hasNextPage.
+        if not errors and page == 0 and container["exceptions"] == [
+            {"__typename": "CommerceProductNotFound", "code": "404"}
+        ]:
+            return False
+        raise RuntimeError("A product catalog page returned an unexpected product exception.")
     if not isinstance(container, dict) or "commerceProducts" not in container:
         raise RuntimeError("A product catalog page had no product result.")
     products = container["commerceProducts"]
@@ -115,6 +131,14 @@ def validate_catalog_response(operation: str, response: Any) -> None:
             and 0 <= path[2] < len(products) and path[3] == "description"
         ):
             raise RuntimeError("A product catalog page returned GraphQL errors.")
+    page_info = container.get("pageInfo")
+    has_next = page_info.get("hasNextPage") if isinstance(page_info, dict) else None
+    if not isinstance(has_next, bool) or (not products and (has_next or page > 0)):
+        raise RuntimeError("A product catalog page had incomplete pagination information.")
+    # The pinned browser loops over range(100), so it cannot fetch a 101st page.
+    if has_next and page == 99:
+        raise RuntimeError("The product catalog exceeded the upstream browser's page limit.")
+    return has_next
 
 
 def install_extensions(namespace: dict[str, Any]) -> None:
@@ -124,17 +148,27 @@ def install_extensions(namespace: dict[str, Any]) -> None:
     if not callable(original_request) or not callable(original_print):
         raise RuntimeError("The pinned upstream browser is missing required functions.")
 
-    def request_with_descriptions(*args: Any, **kwargs: Any) -> Any:
-        if "json_data" in kwargs:
-            kwargs = dict(kwargs)
-            kwargs["json_data"] = add_description_to_product_query(
-                kwargs.get("json_data")
-            )
-        response = original_request(*args, **kwargs)
+    past_last_page: dict[str, Any] | None = None
+
+    def request_catalog_page(*args: Any, **kwargs: Any) -> Any:
+        nonlocal past_last_page
         payload = kwargs.get("json_data")
         operation = payload.get("operationName") if isinstance(payload, dict) else None
-        if operation in ("WebCategories", "WebProductsByCategory"):
+        if operation == "WebProductsByCategory":
+            variables = payload["variables"]
+            if past_last_page is not None and variables == past_last_page:
+                # End the pinned browser's loop before it requests an out-of-range page.
+                past_last_page = None
+                return None
+            kwargs["json_data"] = extend_product_query(payload)
+        past_last_page = None
+        response = original_request(*args, **kwargs)
+        if operation == "WebCategories":
             validate_catalog_response(operation, response)
+        elif operation == "WebProductsByCategory":
+            page = variables["currentPage"]
+            if not validate_catalog_response(operation, response, page):
+                past_last_page = {**kwargs["json_data"]["variables"], "currentPage": page + 1}
         return response
 
     def print_with_description_markers(
@@ -157,7 +191,7 @@ def install_extensions(namespace: dict[str, Any]) -> None:
         if show_watchlist_codes and callable(logger):
             emit_description_markers(products, logger)
 
-    namespace["_execute_api_request"] = request_with_descriptions
+    namespace["_execute_api_request"] = request_catalog_page
     namespace["print_and_sort_products"] = print_with_description_markers
 
 
