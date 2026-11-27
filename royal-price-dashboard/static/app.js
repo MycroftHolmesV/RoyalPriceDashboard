@@ -7,6 +7,7 @@ const HIDE_PENNY_CHANGES_STORAGE_KEY = "royal-price-dashboard.hide-penny-changes
 
 const model = {
   state: null,
+  stateRequest: 0,
   switchingCruise: false,
   removingCruise: false,
   activeTab: "all",
@@ -14,6 +15,7 @@ const model = {
   category: "",
   sort: "category",
   busyItems: new Set(),
+  targetDrafts: new Map(),
   openDescriptions: new Set(),
   openHistory: new Set(),
   busyHistory: new Set(),
@@ -299,9 +301,10 @@ function resetCatalogView(nextState) {
   model.category = "";
   model.openDescriptions.clear();
   model.openHistory.clear();
-  model.busyHistory.clear();
-  model.historyCache.clear();
-  model.busyItems.clear();
+  invalidateHistory();
+  closeExpandedHistory();
+  model.busyItems = new Set();
+  model.targetDrafts.clear();
   model.changeScope = "all";
   model.changePeriod = "since";
   initializeChangeSession(nextState?.active_cruise_id || null);
@@ -310,7 +313,15 @@ function resetCatalogView(nextState) {
   elements.categorySelect.value = "";
 }
 
+function invalidateHistory() {
+  // Pending requests retain their original sailing and catalog snapshot's maps.
+  model.busyHistory = new Set();
+  model.historyCache = new Map();
+}
+
 function acceptState(nextState) {
+  // A completed action supersedes polls started before it.
+  model.stateRequest += 1;
   const priorCruiseId = activeCruiseId();
   const priorGeneratedAt = model.state?.catalog?.generated_at;
   const priorWatches = Object.keys(model.state?.preferences?.watching || {}).sort().join("\n");
@@ -319,12 +330,15 @@ function acceptState(nextState) {
   if (!model.state || priorCruiseId !== nextCruiseId) {
     resetCatalogView(nextState);
   } else if (priorGeneratedAt && priorGeneratedAt !== nextState?.catalog?.generated_at) {
-    model.historyCache.clear();
+    invalidateHistory();
     invalidateChanges();
   } else if (priorWatches !== nextWatches) {
     invalidateChanges();
   }
   model.state = nextState;
+  for (const id of model.targetDrafts.keys()) {
+    if (!nextState.preferences?.watching?.[id]) model.targetDrafts.delete(id);
+  }
   if (nextState?.setup_required) model.onboarding.open = true;
 }
 
@@ -360,12 +374,16 @@ function formatCooldown(seconds) {
 }
 
 async function loadState({ quiet = false } = {}) {
+  const requestId = ++model.stateRequest;
+  let nextState;
   try {
-    const nextState = await request("state");
+    nextState = await request("state");
+    if (requestId !== model.stateRequest) return;
     acceptState(nextState);
     render();
     await loadChanges();
   } catch (error) {
+    if (requestId !== model.stateRequest && model.state !== nextState) return;
     if (!quiet) showToast(error.message);
     elements.errorBanner.textContent = error.message;
     elements.errorBanner.classList.remove("hidden");
@@ -379,6 +397,7 @@ function currentData() {
     catalog,
     preferences,
     items: catalog.items || [],
+    missingWatched: model.state?.missing_watched_items || [],
     pinned: new Set(preferences.pinned || []),
     watching: preferences.watching || {},
   };
@@ -401,9 +420,9 @@ function updateCategoryOptions(items) {
   model.category = elements.categorySelect.value;
 }
 
-function filteredItems(data) {
+function filteredItems(data, items) {
   const search = model.search.trim().toLocaleLowerCase();
-  const result = data.items.filter((item) => {
+  const result = items.filter((item) => {
     const isPinned = data.pinned.has(item.id);
     const isWatching = Boolean(data.watching[item.id]);
     if (model.activeTab === "watching" && !isWatching) return false;
@@ -449,10 +468,11 @@ function filteredItems(data) {
 }
 
 async function mutateItem(itemId, action, body, successMessage) {
-  if (model.busyItems.has(itemId)) return;
+  const busy = model.busyItems;
+  if (busy.has(itemId)) return;
   const cruiseId = activeCruiseId();
   if (!cruiseId) return;
-  model.busyItems.add(itemId);
+  busy.add(itemId);
   renderCatalog();
   try {
     const response = await request(
@@ -462,6 +482,10 @@ async function mutateItem(itemId, action, body, successMessage) {
         body: JSON.stringify(body),
       },
     );
+    if (busy !== model.busyItems) return;
+    if (action === "target" || (action === "watch" && !body.watching)) {
+      model.targetDrafts.delete(itemId);
+    }
     acceptState(response.state);
     if (
       action === "pin"
@@ -472,9 +496,9 @@ async function mutateItem(itemId, action, body, successMessage) {
     }
     showToast(successMessage);
   } catch (error) {
-    showToast(error.message);
+    if (busy === model.busyItems) showToast(error.message);
   } finally {
-    model.busyItems.delete(itemId);
+    busy.delete(itemId);
     render();
     await loadChanges();
   }
@@ -621,7 +645,8 @@ function createHistoryChart(history, { expanded = false } = {}) {
     return Number.isFinite(parsed) ? parsed : index;
   });
   const firstTime = Math.min(...times);
-  const lastTime = Math.max(Date.now(), ...times);
+  const observedThrough = Date.parse(history.observed_through);
+  const lastTime = Math.max(Number.isFinite(observedThrough) ? observedThrough : firstTime, ...times);
   const timeSpan = Math.max(1, lastTime - firstTime);
   const xFor = (index) => padding.left
     + ((times[index] - firstTime) / timeSpan) * plotWidth;
@@ -773,23 +798,25 @@ function createHistoryChart(history, { expanded = false } = {}) {
 }
 
 async function loadHistory(itemId, { force = false } = {}) {
-  if (model.busyHistory.has(itemId)) return;
-  if (!force && model.historyCache.has(itemId)) return;
-  model.busyHistory.add(itemId);
+  const cruiseId = activeCruiseId();
+  const cache = model.historyCache;
+  const busy = model.busyHistory;
+  if (!cruiseId || busy.has(itemId)) return;
+  if (!force && cache.has(itemId)) return cache.get(itemId);
+  busy.add(itemId);
   renderCatalog();
   try {
-    const cruiseId = activeCruiseId();
-    if (!cruiseId) throw new Error("Choose a cruise first.");
     const history = await request(
       `cruises/${encodeURIComponent(cruiseId)}/items/${encodeURIComponent(itemId)}/history`,
     );
-    model.historyCache.set(itemId, history);
+    if (cache === model.historyCache) cache.set(itemId, history);
   } catch (error) {
-    model.historyCache.set(itemId, { error: error.message });
+    if (cache === model.historyCache) cache.set(itemId, { error: error.message });
   } finally {
-    model.busyHistory.delete(itemId);
-    renderCatalog();
+    busy.delete(itemId);
+    if (cache === model.historyCache) renderCatalog();
   }
+  return cache === model.historyCache ? cache.get(itemId) : undefined;
 }
 
 function toggleHistory(itemId) {
@@ -909,11 +936,54 @@ function lastPriceChangeCopy(change, currency) {
   );
 }
 
-function createRow(item, data) {
+// Replacing a focused input's ancestors would discard the caret and partially typed decimals.
+function replaceAroundFocus(container, children, retained) {
+  const index = retained ? children.indexOf(retained) : -1;
+  if (index < 0) {
+    container.replaceChildren(...children);
+    return;
+  }
+  for (const child of Array.from(container.children)) {
+    if (child !== retained) child.remove();
+  }
+  retained.before(...children.slice(0, index));
+  retained.after(...children.slice(index + 1));
+}
+
+function createTargetEditor(item, watch, isBusy) {
+  const editor = node("div", "target-editor");
+  const label = node("label", "", "Alert below");
+  const target = node("input", "target-input");
+  target.type = "number";
+  target.min = "0";
+  target.step = "0.01";
+  target.value = model.targetDrafts.get(item.id) ?? Number(watch.target_price).toFixed(2);
+  target.addEventListener("input", () => model.targetDrafts.set(item.id, target.value));
+  target.setAttribute("aria-label", `Alert target for ${item.name}`);
+  target.disabled = isBusy;
+  const save = node("button", "row-action", "Save target");
+  save.type = "button";
+  save.disabled = isBusy;
+  save.addEventListener("click", () => {
+    const next = target.valueAsNumber;
+    if (!Number.isFinite(next) || next < 0) {
+      showToast("Enter a valid target price.");
+      return;
+    }
+    mutateItem(item.id, "target", { target_price: next }, "Target price updated.");
+  });
+  editor.append(label, target, save);
+  return editor;
+}
+
+function createRow(item, data, editingRow = null) {
   const isPinned = data.pinned.has(item.id);
   const watch = data.watching[item.id];
   const isBusy = model.busyItems.has(item.id);
-  const row = node("article", "price-row");
+  const row = editingRow || node("article", "price-row");
+  row.dataset.cruiseId = activeCruiseId();
+  row.dataset.itemId = item.id;
+  const missing = data.missingWatched.includes(item);
 
   const identity = node("div", "item-identity");
   const titleLine = node("div", "item-title-line");
@@ -928,7 +998,7 @@ function createRow(item, data) {
   identity.append(node("p", "item-meta", location));
   const codeLine = node("p", "item-code");
   codeLine.append("Watch code ");
-  codeLine.append(node("code", "", `${item.prefix} / ${item.product}`));
+  codeLine.append(node("code", "", [item.prefix, item.product].filter(Boolean).join(" / ")));
   identity.append(codeLine);
   if (watch && model.changes && !model.changesError) {
     const latestChange = model.watchedLatestChanges.get(item.id);
@@ -940,48 +1010,27 @@ function createRow(item, data) {
     ));
   }
   if (item.description) identity.append(createDescriptionDisclosure(item));
-  row.append(identity);
 
   const priceBlock = node("div", "price-block");
   if (item.price_available) {
     priceBlock.append(node("span", "price", formatPrice(item)));
     if (item.unit) priceBlock.append(node("span", "price-unit", `per ${item.unit}`));
   } else {
-    priceBlock.append(node("span", "unavailable", "Price unavailable"));
+    priceBlock.append(node("span", "unavailable", missing ? "Missing from latest catalog" : "Price unavailable"));
   }
-  row.append(priceBlock);
 
-  const controls = node("div", "item-controls");
+  const controls = editingRow?.querySelector(".item-controls") || node("div", "item-controls");
+  const focusedEditor = editingRow?.querySelector(".target-editor");
+  const controlNodes = [];
   if (watch) {
-    const editor = node("div", "target-editor");
-    const label = node("label", "", "Alert below");
-    const target = node("input", "target-input");
-    target.type = "number";
-    target.min = "0";
-    target.step = "0.01";
-    target.value = Number(watch.target_price).toFixed(2);
-    target.setAttribute("aria-label", `Alert target for ${item.name}`);
-    target.disabled = isBusy;
-    const save = node("button", "row-action", "Save target");
-    save.type = "button";
-    save.disabled = isBusy;
-    save.addEventListener("click", () => {
-      const next = Number(target.value);
-      if (!Number.isFinite(next) || next < 0) {
-        showToast("Enter a valid target price.");
-        return;
-      }
-      mutateItem(item.id, "target", { target_price: next }, "Target price updated.");
-    });
-    editor.append(label, target, save);
-    controls.append(editor);
+    controlNodes.push(focusedEditor || createTargetEditor(item, watch, isBusy));
 
     const unwatch = node("button", "row-action unwatch", "Unwatch");
     unwatch.type = "button";
     unwatch.disabled = isBusy;
     unwatch.addEventListener("click", () =>
       mutateItem(item.id, "watch", { watching: false }, "Watch removed."));
-    controls.append(unwatch);
+    controlNodes.push(unwatch);
   } else {
     const watchButton = node("button", "row-action watch", "＋ Add watch");
     watchButton.type = "button";
@@ -996,7 +1045,7 @@ function createRow(item, data) {
         { watching: true },
         `Watching ${item.name} below ${formatPrice(item)}.`,
       ));
-    controls.append(watchButton);
+    controlNodes.push(watchButton);
   }
 
   const isHistoryOpen = model.openHistory.has(item.id);
@@ -1011,7 +1060,7 @@ function createRow(item, data) {
   historyButton.setAttribute("aria-controls", historyPanelId(item.id));
   historyButton.title = "Show saved price and availability changes";
   historyButton.addEventListener("click", () => toggleHistory(item.id));
-  controls.append(historyButton);
+  controlNodes.push(historyButton);
 
   const pinButton = node(
     "button",
@@ -1030,9 +1079,11 @@ function createRow(item, data) {
       { pinned: !isPinned },
       isPinned ? "Item unpinned." : "Item pinned. It still appears in All.",
     ));
-  controls.append(pinButton);
-  row.append(controls);
-  if (isHistoryOpen) row.append(createHistoryPanel(item));
+  if (!missing) controlNodes.push(pinButton);
+  replaceAroundFocus(controls, controlNodes, focusedEditor);
+  const sections = [identity, priceBlock, controls];
+  if (isHistoryOpen) sections.push(createHistoryPanel(item));
+  replaceAroundFocus(row, sections, editingRow && controls);
   return row;
 }
 
@@ -1073,8 +1124,7 @@ function changeMovement(change) {
 }
 
 async function openHistoryFromChange(itemId) {
-  await loadHistory(itemId);
-  const history = model.historyCache.get(itemId);
+  const history = await loadHistory(itemId);
   if (!history) return;
   if (history.error) {
     showToast(history.error);
@@ -1802,8 +1852,16 @@ function renderCatalog() {
   }
 
   const data = currentData();
-  const items = filteredItems(data);
-  elements.catalog.replaceChildren(...items.map((item) => createRow(item, data)));
+  const candidates = model.activeTab === "watching" ? data.items.concat(data.missingWatched) : data.items;
+  updateCategoryOptions(candidates);
+  const items = filteredItems(data, candidates);
+  const editingRow = document.activeElement?.closest(".target-editor")?.closest(".price-row");
+  const retainEditor = editingRow && editingRow.dataset.cruiseId === activeCruiseId()
+    && data.watching[editingRow.dataset.itemId] && !model.busyItems.has(editingRow.dataset.itemId);
+  const rows = items.map((item) => createRow(
+    item, data, retainEditor && item.id === editingRow.dataset.itemId ? editingRow : null,
+  ));
+  replaceAroundFocus(elements.catalog, rows, editingRow);
   elements.emptyState.classList.toggle("hidden", items.length !== 0);
   if (items.length === 0) {
     const status = model.state?.status || {};
@@ -1929,7 +1987,6 @@ function render() {
   ].filter(Boolean);
   elements.warningBanner.textContent = warnings.join(" ");
   elements.warningBanner.classList.toggle("hidden", warnings.length === 0);
-  updateCategoryOptions(data.items);
   renderCatalog();
 }
 

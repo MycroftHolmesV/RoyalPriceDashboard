@@ -66,6 +66,7 @@ PRODUCT_RE = re.compile(
     r"\(prefix:\s*(?P<prefix>[^,]+),\s*product:\s*(?P<product>[^)]+)\)\s*$"
 )
 PRODUCT_DESCRIPTION_MARKER = "__ROYAL_PRICE_DASHBOARD_DESCRIPTION__ "
+AFTER_PRODUCT_CATALOG = "Gathering list of activities.  This may take a few minutes; please be patient."
 MAX_PRODUCT_DESCRIPTION_CHARS = 20_000
 
 DEFAULT_OPTIONS: dict[str, Any] = {
@@ -780,10 +781,15 @@ def run_browser(options: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
         currency=options["currency"],
     )
     warning = None
+    if not any(strip_ansi(line) == AFTER_PRODUCT_CATALOG for line in completed.stdout.splitlines()):
+        raise DashboardError(
+            "The browser stopped before completing the product catalog "
+            f"(exit code {completed.returncode}). The App will retry."
+        )
     if completed.returncode != 0:
         warning = (
-            f"The browser exited with code {completed.returncode} after returning "
-            f"{len(catalog['items'])} products."
+            f"The product catalog completed, then the browser exited with code "
+            f"{completed.returncode} during additional sailing information."
         )
         LOGGER.warning(warning)
     return catalog, warning
@@ -1147,6 +1153,7 @@ class CatalogManager:
         self.app_options = load_options(options_file)
         self.lock = threading.RLock()
         self.refresh_gate = threading.Lock()
+        self.scheduler: threading.Thread | None = None
         self.discovery_lock = threading.Lock()
         self._ship_cache: tuple[float, list[dict[str, str]]] | None = None
         self._sailing_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
@@ -1563,6 +1570,24 @@ class CatalogManager:
         runtime = self._runtime(cruise_id)
         return {item["id"]: item for item in runtime.catalog.get("items", [])}
 
+    @staticmethod
+    def _watch_item_details(item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: item.get(key)
+            for key in ("name", "category", "subcategory", "prefix", "unit", "currency")
+        }
+
+    @staticmethod
+    def _missing_watch_item(runtime: CruiseRuntime, item_id: str) -> dict[str, Any]:
+        watch = runtime.preferences["watching"][item_id]
+        return {
+            "name": item_id, "category": "Other", "subcategory": None,
+            "prefix": "", "unit": None, "currency": runtime.config["currency"],
+            **watch.get("item_details", {}),
+            "id": item_id, "product": item_id, "description": None,
+            "price": None, "price_available": False,
+        }
+
     def state(self) -> dict[str, Any]:
         with self.lock:
             now = datetime.now(timezone.utc)
@@ -1648,8 +1673,16 @@ class CatalogManager:
                 },
                 "storage": self.storage_status(),
             }
+            missing_watched_items = []
+            if active is not None:
+                items = self._item_index(active.config["id"])
+                missing_watched_items = [
+                    self._missing_watch_item(active, item_id)
+                    for item_id in active.preferences["watching"] if item_id not in items
+                ]
             return {
                 "setup_required": active is None,
+                "missing_watched_items": missing_watched_items,
                 "active_cruise_id": self.active_cruise_id,
                 "cruises": cruises,
                 "config": active_config,
@@ -1696,8 +1729,13 @@ class CatalogManager:
         with self.lock:
             runtime = self._runtime(cruise_id)
             item = self._item_index(runtime.config["id"]).get(item_id)
+            observed_through = runtime.catalog.get("generated_at")
             if item is None:
-                raise DashboardError("Unknown catalog item.")
+                watch = runtime.preferences["watching"].get(item_id)
+                if watch is None:
+                    raise DashboardError("Unknown catalog item.")
+                item = self._missing_watch_item(runtime, item_id)
+                observed_through = watch.get("last_seen_at")
             item_copy = copy.deepcopy(item)
             catalog_copy = copy.deepcopy(runtime.catalog)
             options_copy = copy.deepcopy(runtime.config)
@@ -1707,11 +1745,17 @@ class CatalogManager:
                 f"Price history is unavailable: {self.history_error or 'unknown error'}"
             )
         try:
-            return history.get_history(
+            result = history.get_history(
                 item=item_copy,
                 catalog=catalog_copy,
                 options=options_copy,
             )
+            result["observed_through"] = observed_through or (
+                result["points"][-1]["observed_at"] if result["points"] else None
+            )
+            if not item_copy.get("price_available", True):
+                result["summary"]["current_price"] = None
+            return result
         except (OSError, sqlite3.Error, ValueError) as error:
             self.history_error = str(error)
             raise DashboardError(f"Could not read price history: {error}") from error
@@ -1932,9 +1976,9 @@ class CatalogManager:
         with self.lock:
             runtime = self._runtime(cruise_id)
             item = self._item_index(runtime.config["id"]).get(item_id)
-            if item is None:
-                raise DashboardError("Unknown catalog item.")
             watches = runtime.preferences.setdefault("watching", {})
+            if item is None and (watching or item_id not in watches):
+                raise DashboardError("Unknown catalog item.")
             if not watching:
                 watches.pop(item_id, None)
             else:
@@ -1944,6 +1988,7 @@ class CatalogManager:
                     raise DashboardError("This item does not have a usable target price.")
                 prior = watches.get(item_id, {})
                 watches[item_id] = {
+                    "item_details": self._watch_item_details(item),
                     "target_price": round(float(target_price), 2),
                     "added_at": prior.get("added_at", utc_now()),
                     "last_alerted_price": prior.get("last_alerted_price"),
@@ -1974,13 +2019,19 @@ class CatalogManager:
             runtime = self._runtime(cruise_id)
             items = self._item_index(runtime.config["id"])
             watches = runtime.preferences.get("watching", {})
+            items.update({
+                item_id: self._missing_watch_item(runtime, item_id)
+                for item_id in watches if item_id not in items
+            })
             lines = ["watchList:"]
+            skipped = []
             for item_id in sorted(
                 watches,
                 key=lambda key: items.get(key, {}).get("name", key).casefold(),
             ):
                 item = items.get(item_id)
-                if item is None:
+                if not item.get("prefix"):
+                    skipped.append(item_id)
                     continue
                 watch = watches[item_id]
                 lines.extend(
@@ -1995,6 +2046,8 @@ class CatalogManager:
                 )
             if len(lines) == 1:
                 lines.append("  []")
+            for item_id in skipped:
+                lines.append(f"# Product {json.dumps(item_id)} omitted: no known watchlist prefix.")
             return "\n".join(lines) + "\n"
 
     def _refresh_schedule(self, runtime: CruiseRuntime) -> tuple[str, int]:
@@ -2006,11 +2059,16 @@ class CatalogManager:
 
     def is_refresh_due(self, cruise_id: str | None = None) -> bool:
         with self.lock:
+            # A cruise can be removed after the scheduler takes its snapshot.
+            if cruise_id is not None and cruise_id not in self._cruises:
+                return False
             runtime = self._runtime(cruise_id)
             if cruise_completion(runtime.config, runtime.catalog)["completed"]:
                 return False
             if self._refresh_cooldown_seconds(runtime) > 0:
                 return False
+            if runtime.consecutive_refresh_failures:
+                return True
             generated = runtime.catalog.get("generated_at")
             if not generated:
                 return True
@@ -2018,6 +2076,8 @@ class CatalogManager:
                 generated_at = datetime.fromisoformat(generated)
             except (TypeError, ValueError):
                 return True
+            if generated_at.tzinfo is None:
+                generated_at = generated_at.replace(tzinfo=timezone.utc)
             age_seconds = (datetime.now(timezone.utc) - generated_at).total_seconds()
             _mode, interval_hours = self._refresh_schedule(runtime)
             return age_seconds >= interval_hours * 3600
@@ -2095,10 +2155,21 @@ class CatalogManager:
             self._require_storage_for_growth()
             with self.lock:
                 runtime = self._runtime(cruise_id)
+                current_ids = {item["id"] for item in catalog["items"]}
+                old_items = self._item_index(cruise_id)
+                departed = runtime.preferences["watching"].keys() & (old_items.keys() - current_ids)
+                if departed:
+                    preferences = copy.deepcopy(runtime.preferences)
+                    for item_id in departed:
+                        watch = preferences["watching"][item_id]
+                        watch["item_details"] = self._watch_item_details(old_items[item_id])
+                        watch["last_seen_at"] = runtime.catalog.get("generated_at")
+                    write_json_atomic(runtime.preferences_file, preferences)
+                    runtime.preferences = preferences
+                write_json_atomic(runtime.catalog_file, catalog)
                 runtime.catalog = catalog
                 runtime.last_warning = warning
                 runtime.consecutive_refresh_failures = 0
-                write_json_atomic(runtime.catalog_file, runtime.catalog)
                 candidates = self._alert_candidates_locked(cruise_id)
             self._record_history(cruise_id, catalog)
 
@@ -2344,6 +2415,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         route = self._route_path()
         if route == "/health":
+            scheduler = self.manager.scheduler
+            if scheduler is not None and not scheduler.is_alive():
+                self._send_json(
+                    {"status": "scheduler_stopped", "version": APP_VERSION},
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+                return
             self._send_json({"status": "ok", "version": APP_VERSION})
             return
         if route == "/api/state":
@@ -2645,6 +2723,7 @@ def main() -> None:
         name="royal-price-scheduler",
         daemon=True,
     )
+    manager.scheduler = scheduler
     scheduler.start()
 
     def stop_server(signum: int, _frame: Any) -> None:

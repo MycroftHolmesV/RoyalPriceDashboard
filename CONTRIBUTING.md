@@ -18,7 +18,11 @@ Before opening a pull request:
    python -m unittest discover -s tests -v
    python -m py_compile server.py upstream_adapter.py tests/test_server.py
    node --check static/app.js
+   node --test tests/test_frontend.mjs
    ```
+
+   The frontend tests use headless Chrome or Edge with fixture data. Set
+   `CHROME_BIN` to the browser executable if it is installed in a custom location.
 
 For changes to upstream catalog behavior, prefer a structured output contract
 in the upstream project over parsing additional terminal presentation text.

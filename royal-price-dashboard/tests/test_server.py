@@ -399,10 +399,12 @@ class UpstreamAdapterTests(unittest.TestCase):
         requests = []
         printed = []
         logged = []
+        api_response = mock.Mock()
+        api_response.json.return_value = {"data": {"products": {"commerceProducts": []}}}
 
         def original_request(*args, **kwargs):
             requests.append((args, kwargs))
-            return "response"
+            return api_response
 
         def original_print(*args):
             printed.append(args)
@@ -418,7 +420,7 @@ class UpstreamAdapterTests(unittest.TestCase):
             method="POST",
             json_data=self.payload(),
         )
-        self.assertEqual(response, "response")
+        self.assertIs(response, api_response)
         self.assertIn("title description", requests[0][1]["json_data"]["query"])
 
         products = [
@@ -466,11 +468,57 @@ class UpstreamAdapterTests(unittest.TestCase):
         self.assertEqual(len(logged), 4)
         self.assertTrue(logged[2].startswith(upstream_adapter.DESCRIPTION_MARKER))
 
+    def test_failed_product_pages_cannot_be_mistaken_for_the_end_of_a_catalog(self):
+        request = mock.Mock()
+        namespace = {"_execute_api_request": request, "print_and_sort_products": mock.Mock()}
+        upstream_adapter.install_extensions(namespace)
+        wrapped = namespace["_execute_api_request"]
+        request.return_value = None
+        with self.assertRaisesRegex(RuntimeError, "page request failed"):
+            wrapped(json_data=self.payload())
+        self.assertIsNone(wrapped(json_data={"operationName": "OtherQuery"}))
+        response = mock.Mock()
+        request.return_value = response
+        for invalid in ({}, {"data": None}, {"data": {"products": None}, "errors": [{}]}):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(RuntimeError, "catalog page"):
+                response.json.return_value = invalid
+                wrapped(json_data=self.payload())
+        for end_page in ([], None):
+            response.json.return_value = {"data": {"products": {"commerceProducts": end_page}}}
+            self.assertIs(wrapped(json_data=self.payload()), response)
+        data = {"products": {"commerceProducts": [{"id": "3222", "description": None}]}}
+        for field in ("id", "price"):
+            response.json.return_value = {
+                "data": data, "errors": [{"path": ["products", "commerceProducts", 0, field]}],
+            }
+            with self.subTest(field=field), self.assertRaisesRegex(RuntimeError, "GraphQL errors"):
+                wrapped(json_data=self.payload())
+        response.json.return_value = {
+            "data": data, "errors": [{"path": ["products", "commerceProducts", 0, "description"]}],
+        }
+        self.assertIs(wrapped(json_data=self.payload()), response)
+
+    def test_category_discovery_rejects_partial_graphql_results(self):
+        response = mock.Mock()
+        payload = {"data": {"categories": {"categories": [{"id": "shorex", "name": "Excursions"}]}}}
+        response.json.return_value = payload
+        upstream_adapter.validate_catalog_response("WebCategories", response)
+        response.json.return_value = {**payload, "errors": [{"message": "Incomplete category list"}]}
+        with self.assertRaisesRegex(RuntimeError, "category list was incomplete"):
+            upstream_adapter.validate_catalog_response("WebCategories", response)
+        response.json.return_value = {"data": {"categories": {"categories": [{"name": "Dining"}]}}}
+        with self.assertRaisesRegex(RuntimeError, "category list was incomplete"):
+            upstream_adapter.validate_catalog_response("WebCategories", response)
+
     def test_main_loads_and_extends_a_pinned_module_without_rewriting_it(self):
         fake_source = """
+class Response:
+    def json(self):
+        return {"data": {"products": {"commerceProducts": []}}}
+
 def _execute_api_request(*args, **kwargs):
     print(kwargs["json_data"]["query"])
-    return None
+    return Response()
 
 def print_and_sort_products(*args):
     print("ORIGINAL PRODUCT OUTPUT")
@@ -959,6 +1007,14 @@ class MultiCruiseTests(unittest.TestCase):
                 timeout=5,
             ) as response:
                 health = json.load(response)
+            manager.scheduler = threading.Thread(target=lambda: None)
+            manager.scheduler.start()
+            manager.scheduler.join(timeout=5)
+            with self.assertRaises(urllib.error.HTTPError) as unavailable:
+                urllib.request.urlopen(f"http://127.0.0.1:{httpd.server_port}/health", timeout=5)
+            with unavailable.exception as response:
+                self.assertEqual(response.code, HTTPStatus.SERVICE_UNAVAILABLE)
+                self.assertEqual(json.load(response)["status"], "scheduler_stopped")
         finally:
             httpd.shutdown()
             httpd.server_close()
@@ -1573,6 +1629,126 @@ class MultiCruiseTests(unittest.TestCase):
             second_cooldown,
             (server.REFRESH_FAILURE_BACKOFF_BASE_SECONDS * 2) - 1,
         )
+
+    def test_partial_catalog_keeps_cached_catalog_history_and_alerts_and_retries(self):
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        cruise_id = self.add_cruise(
+            manager, ship="Wonder of the Seas", sail_date=self.first_date, description="7 Night Cruise",
+        )
+        runtime = manager._runtime(cruise_id)
+        original = self.catalog_for(runtime.config["ship"], self.first_date)
+        with mock.patch.object(server, "run_browser", return_value=(original, None)):
+            manager._refresh_worker(cruise_id)
+        manager.set_watching("3222", True, 100, cruise_id)
+        before = manager.history_for("3222", cruise_id)
+        partial_line = next(line for line in SAMPLE_OUTPUT.splitlines() if "product: 3222)" in line)
+        partial = partial_line.replace("95.99", "80.00")
+        with mock.patch.object(server, "UPSTREAM_SCRIPT", Path(__file__)), mock.patch.object(
+            server.subprocess, "run", return_value=mock.Mock(stdout=partial, returncode=1),
+        ), mock.patch.object(manager, "_send_notification") as notify, mock.patch.object(server.LOGGER, "exception"):
+            manager._refresh_worker(cruise_id)
+        self.assertEqual(runtime.catalog, original)
+        self.assertEqual(json.loads(runtime.catalog_file.read_text(encoding="utf-8")), original)
+        self.assertEqual(manager.history_for("3222", cruise_id), before)
+        self.assertEqual(manager.state()["missing_watched_items"], [])
+        notify.assert_not_called()
+        self.assertIn("stopped before completing", runtime.last_error)
+        self.assertFalse(manager.is_refresh_due(cruise_id))
+        runtime.next_refresh_allowed_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        self.assertTrue(manager.is_refresh_due(cruise_id))
+
+    def test_browser_failure_after_catalog_during_activities_keeps_complete_products(self):
+        output = SAMPLE_OUTPUT + "\n" + server.AFTER_PRODUCT_CATALOG + "\n"
+        with mock.patch.object(server, "UPSTREAM_SCRIPT", Path(__file__)), mock.patch.object(
+            server.subprocess, "run", return_value=mock.Mock(stdout=output, returncode=1),
+        ):
+            catalog, warning = server.run_browser({
+                "ship": "Wonder of the Seas", "sail_date": self.first_date, "currency": "USD",
+            })
+        self.assertEqual(len(catalog["items"]), 3)
+        self.assertIn("product catalog completed", warning)
+
+    def test_missing_watches_remain_manageable_and_recover_when_products_return(self):
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        cruise_id = self.add_cruise(
+            manager, ship="Wonder of the Seas", sail_date=self.first_date, description="7 Night Cruise",
+        )
+        original = self.catalog_for("Wonder of the Seas", self.first_date)
+        original["generated_at"] = "2026-04-01T00:00:00+00:00"
+        with mock.patch.object(server, "run_browser", return_value=(original, None)):
+            manager._refresh_worker(cruise_id)
+        manager.set_watching("3222", True, 85.5, cruise_id)
+        self.assertIn("item_details", manager.preferences["watching"]["3222"])
+        # A pre-upgrade watch still has its old catalog to recover metadata from.
+        del manager.preferences["watching"]["3222"]["item_details"]
+        smaller = copy.deepcopy(original)
+        smaller["items"] = [item for item in smaller["items"] if item["id"] != "3222"]
+        smaller["generated_at"] = "2026-04-02T00:00:00+00:00"
+        with mock.patch.object(server, "run_browser", return_value=(smaller, None)):
+            manager._refresh_worker(cruise_id)
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        state = manager.state()
+        self.assertEqual(state["cruises"][0]["catalog_count"], 2)
+        self.assertEqual(state["cruises"][0]["watch_count"], 1)
+        self.assertEqual([item["id"] for item in state["missing_watched_items"]], ["3222"])
+        missing, = state["missing_watched_items"]
+        self.assertEqual(missing["name"], "Deluxe Beverage Package")
+        self.assertFalse(missing["price_available"])
+        self.assertIsNone(missing["price"])
+        manager.set_target("3222", 99, cruise_id)
+        self.assertIn('prefix: "beverage"', manager.export_watchlist(cruise_id))
+        self.assertIn("price: 99.00", manager.export_watchlist(cruise_id))
+        self.assertEqual(manager._alert_candidates_locked(cruise_id), [])
+        history = manager.history_for("3222", cruise_id)
+        self.assertEqual(history["observed_through"], original["generated_at"])
+        self.assertIsNone(history["summary"]["current_price"])
+        self.assertEqual([point["price"] for point in history["points"]], [95.99])
+        returning = copy.deepcopy(original)
+        returning["generated_at"] = "2026-04-03T00:00:00+00:00"
+        with mock.patch.object(server, "run_browser", return_value=(returning, None)):
+            manager._refresh_worker(cruise_id)
+        self.assertEqual(manager.state()["missing_watched_items"], [])
+        self.assertEqual(manager.history_for("3222", cruise_id)["observed_through"], returning["generated_at"])
+        self.assertEqual(manager._alert_candidates_locked(cruise_id)[0]["id"], "3222")
+
+    def test_legacy_watch_without_catalog_metadata_can_be_removed(self):
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        cruise_id = self.add_cruise(
+            manager, ship="Wonder of the Seas", sail_date=self.first_date, description="7 Night Cruise",
+        )
+        manager.preferences["watching"] = {"OLD": {"target_price": 75}}
+        item, = manager.state()["missing_watched_items"]
+        self.assertEqual(item["name"], "OLD")
+        self.assertIsNone(item["price"])
+        self.assertIn('Product "OLD" omitted', manager.export_watchlist(cruise_id))
+        manager.set_watching("OLD", False, cruise_id=cruise_id)
+        self.assertEqual(manager.state()["missing_watched_items"], [])
+        self.assertEqual(manager.state()["cruises"][0]["refresh_mode"], "unwatched")
+
+    def test_removed_cruise_and_legacy_timestamp_do_not_stop_scheduler(self):
+        manager = server.CatalogManager(self.data_root, self.options_file)
+        removed = self.add_cruise(
+            manager, ship="Wonder of the Seas", sail_date=self.first_date, description="7 Night Cruise",
+        )
+        surviving = self.add_cruise(
+            manager, ship="Celebrity Beyond", sail_date=self.second_date, description="7 Night Cruise",
+        )
+        manager.catalog["generated_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        self.assertFalse(manager.is_refresh_due(surviving))
+        manager.catalog["generated_at"] = "2025-01-01T00:00:00"
+        is_due = manager.is_refresh_due
+
+        def remove_during_check(cruise_id):
+            if cruise_id == removed:
+                manager.remove_cruise(removed)
+            return is_due(cruise_id)
+
+        stop = threading.Event()
+        with mock.patch.object(manager, "is_refresh_due", side_effect=remove_during_check), mock.patch.object(
+            manager, "start_refresh", side_effect=lambda _cruise_id: stop.set(),
+        ) as start, mock.patch.object(stop, "wait", side_effect=lambda _: stop.set()):
+            server.scheduler_loop(manager, stop)
+        start.assert_called_once_with(surviving)
 
     def test_refresh_rechecks_storage_before_saving_catalog(self):
         manager = server.CatalogManager(self.data_root, self.options_file)

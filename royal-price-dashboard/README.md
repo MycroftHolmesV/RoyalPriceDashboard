@@ -72,10 +72,9 @@ available price points. At least two price points are required. Because history
 stores the initial baseline and later changes without duplicating unchanged
 refreshes, this is a recorded-price average rather than a time-weighted average.
 
-Each item's history chart extends through today, carrying the last available
-price forward so stable prices stay visible. This also works with a single
-saved baseline. Unavailable prices are not carried forward, and the extension
-does not add saved observations. Tap or click a recorded price point to display
+Each item's history chart carries its last available price through the last
+catalog check that included it. Repeated checks at the same price can show
+a flat line with a single saved baseline. Tap or click a recorded point to display
 its exact price and date, or focus it with a keyboard. Select **Expand chart**
 for a larger view; narrow screens can scroll across the expanded chart while
 the selected price stays visible below it.
@@ -204,6 +203,7 @@ checks with:
 python -m unittest discover -s tests -v
 python -m py_compile server.py upstream_adapter.py tests/test_server.py
 node --check static/app.js
+node --test tests/test_frontend.mjs
 ```
 
 Pull requests and main-branch pushes build both declared architectures without
